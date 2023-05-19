@@ -1,0 +1,33 @@
+facebook100_netnames = ['facebook100_American75', 'facebook100_Amherst41', 'facebook100_Auburn71',
+                        'facebook100_Baylor93', 'facebook100_BC17', 'facebook100_Berkeley13', 'facebook100_Bingham82',
+                        'facebook100_Bowdoin47', 'facebook100_Brandeis99', 'facebook100_Brown11', 'facebook100_BU10',
+                        'facebook100_Bucknell39', 'facebook100_Cal65', 'facebook100_Caltech36',
+                        'facebook100_Carnegie49', 'facebook100_Colgate88', 'facebook100_Columbia2',
+                        'facebook100_Cornell5', 'facebook100_Dartmouth6', 'facebook100_Duke14', 'facebook100_Emory27',
+                        'facebook100_FSU53', 'facebook100_Georgetown15', 'facebook100_GWU54', 'facebook100_Hamilton46',
+                        'facebook100_Harvard1', 'facebook100_Haverford76', 'facebook100_Howard90',
+                        'facebook100_Indiana69', 'facebook100_JMU79', 'facebook100_Johns Hopkins55',
+                        'facebook100_Lehigh96', 'facebook100_Maine59', 'facebook100_Maryland58', 'facebook100_Mich67',
+                        'facebook100_Michigan23', 'facebook100_Middlebury45', 'facebook100_Mississippi66',
+                        'facebook100_MIT8', 'facebook100_MSU24', 'facebook100_MU78', 'facebook100_Northeastern19',
+                        'facebook100_Northwestern25', 'facebook100_Notre Dame57', 'facebook100_NYU9',
+                        'facebook100_Oberlin44', 'facebook100_Oklahoma97', 'facebook100_Penn94',
+                        'facebook100_Pepperdine86', 'facebook100_Princeton12', 'facebook100_Reed98',
+                        'facebook100_Rice31', 'facebook100_Rochester38', 'facebook100_Rutgers89',
+                        'facebook100_Santa74', 'facebook100_Simmons81', 'facebook100_Smith60',
+                        'facebook100_Stanford3', 'facebook100_Swarthmore42', 'facebook100_Syracuse56',
+                        'facebook100_Temple83', 'facebook100_Tennessee95', 'facebook100_Texas80', 'facebook100_Texas84',
+                        'facebook100_Trinity100', 'facebook100_Tufts18', 'facebook100_Tulane29', 'facebook100_UC33',
+                        'facebook100_UC61', 'facebook100_UC64', 'facebook100_UCF52', 'facebook100_UChicago30',
+                        'facebook100_UCLA26', 'facebook100_UConn91', 'facebook100_UCSB37', 'facebook100_UCSC68',
+                        'facebook100_UCSD34', 'facebook100_UF21', 'facebook100_UGA50', 'facebook100_UIllinois20',
+                        'facebook100_UMass92', 'facebook100_UNC28', 'facebook100_UPenn7', 'facebook100_USC35',
+                        'facebook100_USF51', 'facebook100_USFCA72', 'facebook100_UVA16', 'facebook100_Vanderbilt48',
+                        'facebook100_Vassar85', 'facebook100_Vermont70', 'facebook100_Villanova62',
+                        'facebook100_Virginia63', 'facebook100_Wake73', 'facebook100_WashU32',
+                        'facebook100_Wellesley22', 'facebook100_Wesleyan43', 'facebook100_William77',
+                        'facebook100_Williams40', 'facebook100_Wisconsin87', 'facebook100_Yale4']
+net_names = ["highSchool", "primarySchool"] + facebook100_netnames
+synthetic_net_names = ["SSBM_{n}_{c}_{k}_{epsilon}"]
+# TODO socPokec
+# TODO dblp

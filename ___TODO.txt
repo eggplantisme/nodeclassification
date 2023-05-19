@@ -1,0 +1,4 @@
+1. implement more empirical netdata
+2. implement node set split (Train, Validation, Test)
+2. implement more representation method
+3. implement more node attribute prediction method
