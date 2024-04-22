@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.sparse.linalg import eigsh
-from scipy.sparse import eye, diags, issparse, csr_matrix
+from scipy.sparse import eye, diags, issparse, csr_array
 
 
 class SpectralOperator(object):
@@ -16,12 +16,12 @@ class SpectralOperator(object):
             evals = np.array([1])
             evecs = np.array([[1]])
         elif K < M.shape[0]:
-            evals, evecs = eigsh(M, K, which=which)
+            evals, evecs = eigsh(M, K, which=which, tol=1e-6)
         else:
             evals, evecs = eigsh(M, M.shape[0] - 1, which=which)
         self.evals, self.evecs = evals, evecs
 
-    def find_negative_eigenvectors(self):
+    def find_negative_eigenvectors(self, K_max=None):
         """
         Find negative eigenvectors.
 
@@ -29,18 +29,19 @@ class SpectralOperator(object):
         eigenvalues and return number of negative eigenvalues
         """
         M = self.operator
-        Kmax = M.shape[0] - 1
+        Kmax = M.shape[0] - 1 if K_max is None else K_max
         K = min(10, Kmax)
         if self.evals is None:
             self.find_k_eigenvectors(K, which='SA')
         elif len(self.evals) < K:
             self.find_k_eigenvectors(K, which='SA')
         relevant_ev = np.nonzero(self.evals < 0)[0]
-        while relevant_ev.size == K:
-            K = min(2 * K, Kmax)
+        while relevant_ev.size == K and K != Kmax:
+            K = min(10 * K, Kmax)  # adjust search speed
+            print(f"Try first {K} eigenvalue...")
             self.find_k_eigenvectors(K, which='SA')
             relevant_ev = np.nonzero(self.evals < 0)[0]
-            # search negative eigenvectors from 10, 20, 30, ..., use this way to save the memory @jiaze
+            # search negative eigenvectors from 10, 20, 40, ..., use this way to save the memory @jiaze
         self.evals = self.evals[relevant_ev]
         self.evecs = self.evecs[:, relevant_ev]
         return len(relevant_ev)
@@ -49,7 +50,7 @@ class SpectralOperator(object):
 class BetheHessian(SpectralOperator):
 
     def __init__(self, A, r=None, regularizer='BHa'):
-        super(BetheHessian, self).__init__()
+        super().__init__()
         self.A = A
         self.r = r
         self.calc_r(regularizer)
@@ -78,9 +79,30 @@ class BetheHessian(SpectralOperator):
         self.operator = B
 
 
+class WeightedBetheHessian(BetheHessian):
+    def __init__(self, A, r=None, regularizer='BHa'):
+        super().__init__(A, r, regularizer)
+
+    def build_operator(self):
+        """
+        Construct Weighted Bethe Hessian, e.g., in Saade et al
+        B_ij = \delta_ij(1 + \sum_{k\in\partial i}\frac{w_ik^2}{r^2-w_ik^2})-\frac{rw_ijA_ij}{r^2-w_ij^2}
+        """
+        n = self.A.shape[0]
+        # A = self.A / self.A.max()  # Normalize
+        A = self.A.tanh()
+        # print("Weighted BH building...")
+        d = csr_array(A ** 2 / (csr_array(self.r ** 2 * np.ones((n, n))) - A ** 2)).sum(axis=1).flatten().astype(float)
+        d = diags(d, 0)
+        d = d + csr_array(np.ones((n, n)))
+        B = d - csr_array((self.r * A) / (csr_array(self.r ** 2 * np.ones((n, n))) - A ** 2))
+        print(f"r={self.r}, Weighted BH build.")
+        self.operator = B
+
+
 def test_sparse_and_transform(A):
     """ Check if matrix is sparse and if not, return it as sparse matrix"""
     if not issparse(A):
         print("""Input matrix not in sparse format, transforming to sparse matrix""")
-        A = csr_matrix(A)
+        A = csr_array(A)
     return A

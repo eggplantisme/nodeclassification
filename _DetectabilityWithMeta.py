@@ -1,10 +1,12 @@
 import numpy as np
 import random
+import itertools
 import networkx as nx
+from numpy.linalg import eig
 
 
 class MetaSBM:
-    def __init__(self, n, rho, ps=None, sizes=None):
+    def __init__(self, n, rho, ps=None, sizes=None, quickwithoutmeta=False):
         """
         A stochastic block model with metadata generated based on groups
         :param n: number of nodes
@@ -21,7 +23,8 @@ class MetaSBM:
         self.get_sbm_parameter(sizes, ps)
         self.groupId = None
         self.metaId = None
-        self.generate_meta()
+        if not quickwithoutmeta:
+            self.generate_meta()
 
     def get_sbm_parameter(self, sizes, ps):
         if sizes is None and ps is None:
@@ -49,8 +52,22 @@ class MetaSBM:
     def generate_meta(self):
         number_of_group = np.sum([len(s) for s in self.sizes])
         number_of_meta = len(self.sizes)
-        self.groupId = np.arange(0, number_of_group).repeat(np.array([gs for ms in self.sizes for gs in ms]))
-        self.metaId = np.arange(0, number_of_meta).repeat(np.array([np.sum(ms) for ms in self.sizes]))
+        self.groupId = []
+        gid = 0
+        for s in self.sizes:
+            for size in s:
+                self.groupId += [gid]*int(size)
+                gid += 1
+        self.groupId = np.array(self.groupId)
+        # self.groupId = np.arange(0, number_of_group).repeat(np.array([gs for ms in self.sizes for gs in ms]))
+        # self.metaId = np.arange(0, number_of_meta).repeat(np.array([np.sum(ms) for ms in self.sizes]))
+        self.metaId = []
+        mid = 0
+        for s in self.sizes:
+            self.metaId += [mid]*int(np.sum(s))
+            mid += 1
+        self.metaId = np.array(self.metaId)
+        # print(self.sizes)
         metaIdClass = np.unique(self.metaId)
         for i in range(self.N):
             r = random.random()
@@ -59,7 +76,8 @@ class MetaSBM:
         print("Metadata generation done!")
 
     def sample(self):
-        group_sizes = np.array(self.sizes).flatten()
+        # group_sizes = np.array(self.sizes).flatten()
+        group_sizes = list(itertools.chain.from_iterable(self.sizes))
         g = nx.stochastic_block_model(sizes=group_sizes, p=self.ps)
         A = nx.to_scipy_sparse_array(g)  # csr sparse matrix
         return A
@@ -77,31 +95,122 @@ class MetaSBM:
         return filterA, filterGroupId
 
     @staticmethod
-    def snr(_rho=0.5, _delta=0, N=600, X=2, Z=3, d=300, withMeta=False):
-        if withMeta is False:
-            snr = N**2 * _delta**2 / ((X*Z)**2*d)
+    def get_lambdas(n, rho, Z_s, Z_b, pin, pout):
+        """
+        Eigenvalues of subgraph in Minority Paper
+        :param n: Nodes number in subgraph
+        :param rho:
+        :param Z_s:
+        :param Z_b:
+        :param pin:
+        :param pout:
+        :return:
+        """
+        delta = pin - pout
+        epsilon = rho / Z_s - (1-rho) / Z_b
+        lambda1 = (n / 2) * ((rho / Z_s + (1 - rho) / Z_b) * delta + pout +
+                             np.sqrt((epsilon * delta + pout) ** 2 + 4 * (rho - 1) * epsilon * delta * pout))
+        lambda2 = n * rho / Z_s * delta
+        lambda3 = (n / 2) * ((rho / Z_s + (1 - rho) / Z_b) * delta + pout -
+                             np.sqrt((epsilon * delta + pout) ** 2 + 4 * (rho - 1) * epsilon * delta * pout))
+        lambda4 = n * (1 - rho) / Z_b * delta
+        if rho == 0:
+            result = [lambda1]
+            result.append(lambda4) if Z_b != 1 else None
+        elif rho == 1:
+            result = [lambda1]
+            result.append(lambda2) if Z_s != 1 else None
+        elif rho >= Z_s / (Z_s + Z_b):
+            result = [lambda1]
+            result.append(lambda2) if Z_s != 1 else None
+            result.append(lambda3)
+            result.append(lambda4) if Z_b != 1 else None
         else:
-            # only know for X=2
-            if _rho <= 1 / 2:
-                # SNR1
-                snr = 2*(N**2)*((1-_rho)**2)*(_delta**2)/(Z*(2*Z*d+N*_delta+np.sqrt((2*Z*d-N*_delta)**2+(8*N*Z*d*_delta)*((1-2*_rho)**2))))
-            elif _rho > 1 / 2:
-                # SNR2
-                snr = 2*(N**2)*(_rho**2)*(_delta**2)/(Z*(2*Z*d+N*_delta+np.sqrt((2*Z*d-N*_delta)**2+(8*N*Z*d*_delta)*((1-2*_rho)**2))))
+            result = [lambda1]
+            result.append(lambda4) if Z_b != 1 else None
+            result.append(lambda3)
+            result.append(lambda2) if Z_s != 1 else None
+        return result
+
+    def general_get_snr(self, withMeta=False):
+        """ Get SNR with general method
+        withMeta: get the SNR from subgraph with meta=0
+        """
+        if withMeta is False:
+            P = np.diag(np.array(self.sizes).flatten()) / self.N
+            Q = self.N * self.ps
+            snr = self.general_SNR(P, Q)
+        else:
+            X = len(self.sizes)
+            Z = len(self.sizes[0])
+            if self.rho == 0:
+                P = np.diag([(1 - self.rho) / (Z * (X - 1))] * (Z * (X - 1)))
+                Q = self.N / X * self.ps[Z, :][Z, :]
+            elif self.rho == 1:
+                P = np.diag([self.rho / Z] * Z)
+                Q = self.N / X * self.ps[:, Z][:, Z]
+            else:
+                P = np.diag([self.rho / Z] * Z + [(1 - self.rho) / (Z * (X - 1))] * (Z * (X - 1)))
+                Q = self.N / X * self.ps
+            snr = self.general_SNR(P, Q)
+        return snr
+
+    @staticmethod
+    def general_SNR(P, Q):
+        eigva, _ = eig(P.dot(Q))
+        sorteigva = sorted(eigva, key=lambda v: np.abs(v))
+        snr = (sorteigva[-2] ** 2) / sorteigva[-1]
         return snr
 
 
 class SymMetaSBM(MetaSBM):
-    def __init__(self, n, X, Z, rho, pin, pout):
+    def __init__(self, n, X, Z, rho, pin, pout, quickwithoutmeta=False):
         sizes = [[int(n/(X*Z)) for z in range(Z)] for x in range(X)]
         ps = (pin - pout) * np.identity(X*Z) + pout * np.ones((X*Z, X*Z))
-        super().__init__(n, rho, ps, sizes)
+        self.pin = pin
+        self.pout = pout
+        self.X = X
+        self.Z = Z
+        self.delta = pin - pout
+        self.d = n / (X * Z) * (pin + (X * Z - 1) * pout)
+        super().__init__(n, rho, ps, sizes, quickwithoutmeta)
+
+    def get_snr(self, withMeta=False, withTheory=True):
+        if not withTheory:
+            snr = super().get_snr(withMeta)
+        else:
+            if withMeta is False:
+                snr = self.N**2 * self.delta**2 / ((self.X * self.Z)**2*self.d)
+            elif self.X == 2:
+                # only know for X=2
+                temp_sqrtvar = np.sqrt((2*self.Z*self.d-self.N*self.delta)**2+(8*self.N*self.Z*self.d*self.delta)*((1-2*self.rho)**2))
+                if self.Z == 1:
+                    snr = (2*self.Z*self.d+self.N*self.delta - temp_sqrtvar) ** 2 / (8 * (2*self.Z*self.d+self.N*self.delta + temp_sqrtvar))
+                elif self.rho <= 1 / 2:
+                    # SNR1
+                    snr = 2*(self.N**2)*((1-self.rho)**2)*(self.delta**2)/(self.Z*(2*self.Z*self.d+self.N*self.delta+temp_sqrtvar))
+                else:
+                    # SNR2
+                    snr = 2*(self.N**2)*(self.rho**2)*(self.delta**2)/(self.Z*(2*self.Z*self.d+self.N*self.delta+temp_sqrtvar))
+            else:
+                print("Theory SNR_SUB for X>2 is not defined!")
+                snr = None
+        return snr
 
 
 def test_main():
-    n = 2 ** 10
-    rho = 0.8
-    MetaSBM(n, rho)
+    X = 2
+    Z = 1
+    n = X * Z * 2000  # 12000 nodes
+    d = 50
+    rho = 0.02
+    delta = 0.025
+    pin = d / n + delta * (1 - 1 / (X * Z))
+    pout = d / n - delta / (X * Z)
+    pin = 0 if pin < 1e-10 else pin
+    pout = 0 if pout < 1e-10 else pout
+    msbm = SymMetaSBM(n, X, Z, rho, pin, pout)
+    print(f'SNR_FULL is {msbm.get_snr(False)}, SNR_SUB is {msbm.get_snr(True)}')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,26 @@
+graph #:	#nodes	#edges		Group size	block affinity												likelihood
+groups #:	1
+graph 0:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 1:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 2:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 3:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 4:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 5:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 6:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 7:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 8:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+graph 9:	steps 0.0:	bound 2000.0:	ratio:-147315.52365593423
+groups #:	2
+graph 0:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 1:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 2:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 3:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 4:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 5:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 6:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 7:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 8:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+graph 9:	steps 0.0:	bound 4000.0:	ratio:-139189.26375065424
+groups #:	3
+graph 0:	steps 0.0:	bound 6000.0:	ratio:-133018.67995514997
+graph 1:	

@@ -1,0 +1,48 @@
+graph #:	#nodes	#edges		Group size	block affinity												likelihood
+groups #:	1
+graph 0:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 1:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 2:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 3:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 4:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 5:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 6:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 7:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 8:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+graph 9:	steps 0.0:	bound 2000.0:	ratio:-149714.82810797563
+groups #:	2
+graph 0:	steps 0.0:	bound 4000.0:	ratio:-141588.68144453637
+graph 1:	steps 0.0:	bound 4000.0:	ratio:-141588.68144453637
+graph 2:	steps 0.0:	bound 4000.0:	ratio:-141588.68144453637
+graph 3:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+graph 4:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+graph 5:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+graph 6:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+graph 7:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+graph 8:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+graph 9:	steps 0.0:	bound 4000.0:	ratio:-141552.60000657354
+groups #:	3
+graph 0:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 1:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 2:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 3:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 4:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 5:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 6:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 7:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 8:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+graph 9:	steps 0.0:	bound 6000.0:	ratio:-135419.28945473154
+groups #:	4
+graph 0:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 1:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 2:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 3:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 4:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 5:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 6:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 7:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 8:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+graph 9:	steps 0.0:	bound 8000.0:	ratio:-130099.23878412106
+groups #:	5
+graph 0:	steps 0.0:	bound 10000.0:	ratio:-124584.81553079087
+graph 1:	

@@ -1,0 +1,2 @@
+graph #:	#nodes	#edges		Group size	block affinity												likelihood
+graph 0:	1000	27690	vanilla	

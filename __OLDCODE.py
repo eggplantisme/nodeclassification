@@ -101,3 +101,64 @@ def exp1():
     p.close()
     p.join()
     print('All subprocesses done.')
+
+
+@staticmethod
+def run_exp(rhos, deltas, times, save_path=None, X=2, Z=3, n=600, d=300, Withsnr=False):
+    for rho in rhos:
+        for delta in deltas:
+            pin = d / n + delta * (1 - 1 / (X * Z))
+            pout = d / n - delta / (X * Z)
+            pin = 0 if pin < 1e-10 else pin
+            pout = 0 if pout < 1e-10 else pout
+            # pout = 2 * Z * dout / n
+            # pin = Z * pout * z + pout
+            msbm = SymMetaSBM(n, X, Z, rho, pin, pout)
+            for t in range(times):
+                start = time.time()
+                print(f"EXP begin... rho={rho}, delta={delta}, times={t}, pin={pin}, pout={pout}")
+                A = msbm.sample()
+                fullBHpartition = CommunityDetect(A).BetheHessian()
+                full_ami = adjusted_mutual_info_score(msbm.groupId, fullBHpartition)
+                filterA, filterGroupId = msbm.filter(A, metaId=0)
+                subBHpartition = CommunityDetect(filterA).BetheHessian()
+                sub_ami = adjusted_mutual_info_score(filterGroupId, subBHpartition)
+                if Withsnr and X == 2:
+                    snr_nm = msbm.snr(rho, delta, N=n, X=X, Z=Z, d=d, withMeta=False)
+                    snr_m = msbm.snr(rho, delta, N=n, X=X, Z=Z, d=d, withMeta=True)
+                    print(f"EXP end. full_ami={full_ami}, sub_ami={sub_ami}. snr_nm={snr_nm}, snr_m={snr_m}. "
+                          f"Time:{np.around(time.time()-start, 3)}")
+                    if save_path is not None:
+                        with open(save_path, 'a') as fw:
+                            fw.write(f'{rho} {delta} {t} {full_ami} {sub_ami} {snr_nm} {snr_m}\n')
+                else:
+                    print(f"EXP end. full_ami={full_ami}, sub_ami={sub_ami}. "
+                          f"Time:{np.around(time.time()-start, 3)}")
+                    if save_path is not None:
+                        with open(save_path, 'a') as fw:
+                            fw.write(f'{rho} {delta} {t} {full_ami} {sub_ami}\n')
+
+@staticmethod
+def read_exp(load_path, Withsnr=False):
+    with open(load_path, 'r') as f:
+        results = np.float64([row.strip().split() for row in f.readlines()])
+        rhos = np.unique(results[:, 0])
+        zs = np.unique(results[:, 1])
+        full_ami = np.zeros(np.size(zs) * np.size(rhos))
+        sub_ami = np.zeros(np.size(zs) * np.size(rhos))
+        snr_nm = np.zeros(np.size(zs) * np.size(rhos)) if Withsnr else None
+        snr_m = np.zeros(np.size(zs) * np.size(rhos)) if Withsnr else None
+        i = 0
+        for _rho in rhos:
+            for _z in zs:
+                ami_results = results[np.squeeze(np.argwhere(np.logical_and(results[:, 0]==_rho, results[:, 1]==_z)))]
+                mean_ami = np.mean(ami_results, 0)[3:]
+                full_ami[i] = mean_ami[0]
+                sub_ami[i] = mean_ami[1]
+                if Withsnr:
+                    snr_nm[i] = mean_ami[2]
+                    snr_m[i] = mean_ami[3]
+                i += 1
+        plot_rhos = np.repeat(rhos, np.size(zs))
+        plot_zs = np.tile(zs, np.size(rhos))
+    return plot_rhos, plot_zs, full_ami, sub_ami, snr_nm, snr_m
