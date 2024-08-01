@@ -33,7 +33,7 @@ def gen_colors(start, end, n):
 def plot_block_matrix(reorder_A, partition_names=None, partition_counts=None, colors=None, ms=1,
                       save_path=None, label='Adjacency matrix', show_legend=True,
                       show_thislevel_partition=False, thislevel_partition_counts=None,
-                      show_highlevel_partition=False, highlevel_partition_counts=None):
+                      show_highlevel_partition=False, highlevel_partition_counts=None, color_by_row=False):
     if colors is None:
         colors = []
     if partition_counts is None:
@@ -47,9 +47,11 @@ def plot_block_matrix(reorder_A, partition_names=None, partition_counts=None, co
         accumulate_count += cur_counts
         temp_A = np.copy(reorder_A)
         temp_A[accumulate_count:, :] = 0
-        temp_A[:, accumulate_count:] = 0
+        if color_by_row is False:
+            temp_A[:, accumulate_count:] = 0
         temp_A[:accumulate_count-cur_counts, :] = 0
-        temp_A[:, :accumulate_count-cur_counts] = 0
+        if color_by_row is False:
+            temp_A[:, :accumulate_count-cur_counts] = 0
         plt.spy(temp_A, markersize=ms, rasterized=True, color=colors[i], label=partition_names[i])
     if show_thislevel_partition:
         counts_sum = 0
@@ -126,12 +128,14 @@ def color_imshow_2d(x, y, z, z_center, title="", xlabel="", ylabel="", min_z=Non
     maxz = max_z if max_z is not None else np.max(z)
     norm_z = np.zeros(np.size(z))
     for i in range(np.size(z)):
+        if np.abs(z[i]) < 1e-5:
+            z[i] = 0
         if minz <= z[i] <= z_center:
             norm_z[i] = (z[i] - minz) / (z_center - minz) * 0.5
         elif z[i] > z_center:
             norm_z[i] = (z[i] - z_center) / (maxz - z_center) * 0.5 + 0.5
         else:
-            pass
+            norm_z[i] = z[i] if z[i] < 0 else -1
     _x = np.sort(np.unique(x))
     # print(np.size(_x))
     _y = np.sort(np.unique(y))
@@ -176,10 +180,18 @@ def color_imshow_2d(x, y, z, z_center, title="", xlabel="", ylabel="", min_z=Non
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
     # cticks = [0, 0.25, 0.5, 0.75, 1]
-    cticks = [0, 0.5, 1 if vmax is None else norm_vmax]
-    clabels = [str(np.round(2 * x * (z_center - minz) + minz, 1)) if x < 0.5 else str(
-        np.round((2 * x - 1) * (maxz - z_center) + z_center, 1)) for x in cticks]
-    cbar = fig.colorbar(im, cax=cax, ticks=cticks)
+    # cticks = [0, 0.5, 1 if vmax is None else norm_vmax
+    if vmax is None and maxz <= 1:
+        cticks = np.linspace(0, 1, 2)
+    elif vmax is None:
+        cticks = np.linspace(0, 1, int(maxz))
+    else:
+        cticks = np.linspace(0, norm_vmax, int(vmax))
+    # cticks = np.linspace(0, 1 if vmax is None else norm_vmax, 2 if vmax is None else int(vmax))
+    clabels = [str(np.round(np.abs(2 * x * (z_center - minz) + minz), 0)) if x < 0.5 else str(
+        np.round((2 * x - 1) * (maxz - z_center) + z_center, 0)) for x in cticks]
+    print(f'minz={minz}, maxz={maxz}, cticks={cticks}, clabel={clabels}')
+    cbar = fig.colorbar(im, cax=cax, ticks=cticks, extend='both')
     # cbar = fig.colorbar(cm.ScalarMappable(norm=None, cmap=cmap), ticks=cticks, cax=cax)
     cbar.ax.tick_params(labelsize=10)
     cbar.ax.set_yticklabels(clabels)

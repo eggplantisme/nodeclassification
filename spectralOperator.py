@@ -89,12 +89,12 @@ class WeightedBetheHessian(BetheHessian):
         B_ij = \delta_ij(1 + \sum_{k\in\partial i}\frac{w_ik^2}{r^2-w_ik^2})-\frac{rw_ijA_ij}{r^2-w_ij^2}
         """
         n = self.A.shape[0]
-        # A = self.A / self.A.max()  # Normalize
-        A = self.A.tanh()
+        A = self.A / self.A.max()  # Normalize
+        A = self.r * self.A.tanh()
         # print("Weighted BH building...")
         d = csr_array(A ** 2 / (csr_array(self.r ** 2 * np.ones((n, n))) - A ** 2)).sum(axis=1).flatten().astype(float)
         d = diags(d, 0)
-        d = d + csr_array(np.ones((n, n)))
+        d = d + csr_array(np.identity(n))
         B = d - csr_array((self.r * A) / (csr_array(self.r ** 2 * np.ones((n, n))) - A ** 2))
         print(f"r={self.r}, Weighted BH build.")
         self.operator = B

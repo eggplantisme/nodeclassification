@@ -2,7 +2,7 @@ import numpy as np
 import time
 import os
 import networkx as nx
-import graph_tool.all as gt
+# import graph_tool.all as gt
 from spectralOperator import BetheHessian, WeightedBetheHessian
 from sklearn.cluster import KMeans
 from sklearn.metrics.cluster import adjusted_mutual_info_score

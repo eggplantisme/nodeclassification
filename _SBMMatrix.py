@@ -7,6 +7,7 @@ from numpy.linalg import eig
 import matplotlib.pyplot as plt
 import itertools
 import random
+from tqdm import tqdm
 import hypernetx as hnx
 
 
@@ -165,25 +166,53 @@ class BipartiteSBM(SBMMatrix):
         _, s, _ = np.linalg.svd(self.H)
         return s
 
-
-class HyperSBM:
-    def __init__(self, sizes, ps_dict):
+    def get_projection_operator(self, projection_matrix, operator='WNB', r=0):
         """
-        Initial hyper SBM
-        :param sizes: the sizes of each community
-        :param ps_dict: the link probability tensors, key is order of edges m, value is m-order tensor,
-                        dimension is the number of communities
+        :param operator: WNB, WBH
+        :param r: parameter for WBH
+        """
+        if operator == 'WNB':
+            edges = []
+            x, y, _ = find(projection_matrix)
+            for i, x_i in enumerate(x):
+                edges.append((x_i, y[i]))
+            e = len(edges)
+            B = np.zeros((e, e))
+            for i in range(len(edges)):
+                for j in range(len(edges)):
+                    if edges[i][1] == edges[j][0] and edges[i][0] != edges[j][1]:
+                        B[i, j] = projection_matrix[edges[i][0], edges[i][1]]
+                    else:
+                        B[i, j] = 0
+            return csr_array(B)
+        elif operator == 'WBH':
+            n1 = np.shape(projection_matrix)[0]
+            BBT = projection_matrix
+            # BBT = BBT / BBT.max() # Normalize
+            # r = np.sqrt(BBT.sum() / BBT.shape[0])
+            # BBT = r * BBT.tanh()
+            d = csr_array(BBT ** 2 / (csr_array(r ** 2 * np.ones((n1, n1))) - BBT ** 2)).sum(axis=1).flatten().astype(
+                float)
+            d = diags(d, 0)
+            d = d + csr_array(np.identity(n1))
+            BH = d - csr_array((r * BBT) / (csr_array(r ** 2 * np.ones((n1, n1))) - BBT ** 2))
+            return BH
+        else:
+            pass
+
+
+class PoissonSBM:
+    def __init__(self, sizes, omegas):
+        """
+        generate a weighted graph by poisson SBM in paper: <Stochastic blockmodels and community structure in networks>
+        :param sizes: the sizes of each block
+        :param omegas: the expect weight matrix: len(sizes) * len(sizes)
         """
         self.n = np.sum(sizes)
         self.sizes = sizes
-        self.ps_dict = ps_dict
-        self.A = dict()  # adjacent list for different order of edges
+        self.omegas = omegas
         self.groupId = []
-        self.H = None
-        self.hyper_g = None
-        self.bipartite_g = None
-        self.bipartite_A = None
-        self.e = 0  # number of edges
+        self.A = np.zeros((self.n, self.n))
         self.construct()
 
     def construct(self):
@@ -192,46 +221,27 @@ class HyperSBM:
             self.groupId += [gid] * int(s)
             gid += 1
         self.groupId = np.array(self.groupId)
-        data = []
-        row_ind = []
-        col_ind = []
-        for key in self.ps_dict.keys():
-            self.A[key] = []
-            for index in itertools.product(range(self.n), repeat=key):
-                if np.size(np.unique(index)) < len(index):
-                    # pass when exist same node
-                    pass
-                else:
-                    gindex = tuple(self.groupId[i] for i in index)
-                    p = np.array(self.ps_dict[key])[gindex]
-                    r = random.random()
-                    if r < p:
-                        self.A[key].append(index)
-                        data += [1] * key
-                        row_ind += list(index)
-                        col_ind += [self.e] * key
-                        self.e += 1
-        self.H = csr_array((data, (row_ind, col_ind)))
-        # print(np.shape(self.H))
-        self.hyper_g = hnx.Hypergraph.from_numpy_array(self.H.toarray())
-        lefttop = csr_array(np.zeros((self.n, self.n)))
-        rightbottom = csr_array(np.zeros((self.e, self.e)))
-        self.bipartite_A = csr_array(vstack([hstack([lefttop, self.H]), hstack([self.H.transpose(), rightbottom])]))
-        # print(np.shape(self.bipartite_A))
-        # self.bipartite_g = self.hyper_g.bipartite()
-        # self.bipartite_A = nx.to_scipy_sparse_array(self.bipartite_g)
+        for index in tqdm(itertools.combinations(range(self.n), r=2)):
+            if np.size(np.unique(index)) < len(index):
+                # pass when exist same node
+                pass
+            else:
+                gindex = tuple(self.groupId[i] for i in index)
+                omega = self.omegas[gindex]
+                w = np.random.poisson(omega, 1)
+                self.A[index] = w
+        self.A = self.A + self.A.T
+        self.A = csr_array(self.A)
+        # self.A = self.A.tanh()
 
-    def get_operator(self, operator='B', r=0):
+    def get_operator(self, operator='WNB', r=0):
         """
-        operator corresponding with bipartite form
-        :param operator: B, NB, BH
-        :param r: parameter for BH
+        :param operator: WNB, WBH
+        :param r: parameter for WBH
         """
-        if operator == 'B':
-            return self.bipartite_A
-        elif operator == 'NB':
+        if operator == 'WNB':
             edges = []
-            x, y, _ = find(self.bipartite_A)
+            x, y, _ = find(self.A)
             for i, x_i in enumerate(x):
                 edges.append((x_i, y[i]))
             e = len(edges)
@@ -239,17 +249,20 @@ class HyperSBM:
             for i in range(len(edges)):
                 for j in range(len(edges)):
                     if edges[i][1] == edges[j][0] and edges[i][0] != edges[j][1]:
-                        B[i, j] = 1
+                        B[i, j] = self.A[edges[i][0], edges[i][1]]
                     else:
                         B[i, j] = 0
             return csr_array(B)
-        elif operator == 'BH':
-            D = diags(self.bipartite_A.sum(axis=1).flatten().astype(float))
-            B = eye(self.bipartite_A.shape[0]) * (r ** 2 - 1) - r * self.bipartite_A + D
-            return B
+        elif operator == 'WBH':
+            n1 = np.shape(self.A)[0]
+            d = csr_array(self.A ** 2 / (csr_array(r ** 2 * np.ones((n1, n1))) - self.A ** 2)).sum(axis=1).flatten().astype(
+                float)
+            d = diags(d, 0)
+            d = d + csr_array(np.identity(n1))
+            BH = d - csr_array((r * self.A) / (csr_array(r ** 2 * np.ones((n1, n1))) - self.A ** 2))
+            return BH
         else:
             pass
-
 
 def main():
     # hierarchy = generation.create2paramGHRG(n=3**9, snr=25, c_bar=38, n_levels=3, groups_per_level=3)
@@ -267,11 +280,21 @@ def main():
     # sbm = SBMMatrix(sizes, ps)
     # sbm.change_operator('NB')
     # sbm.plot_eigenvalue()
-    n = 2 ** 6
-    k = 3
-    d = 25
-    epsilon = 0
-    net = SymmetricSBM.init_epsc(n, k, d, epsilon)
+    # n = 2 ** 6
+    # k = 3
+    # d = 25
+    # epsilon = 0
+    # net = SymmetricSBM.init_epsc(n, k, d, epsilon)
+    n = 1000
+    q = 2
+    d = 5
+    snr = 3
+    sizes = [int(n / q)] * q
+    ps_dict = dict({2: None})  # only have 2-order edges
+    pout = (d - np.sqrt(snr * d)) / n
+    pin = pout + q * np.sqrt(snr * d) / n
+    ps_dict[2] = (pin - pout) * np.identity(q) + pout * np.ones((q, q))
+    hsbm = HyperSBM(sizes, ps_dict)
 
 
 if __name__ == '__main__':

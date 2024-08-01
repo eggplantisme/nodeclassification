@@ -6,27 +6,95 @@ from sklearn.metrics.cluster import adjusted_mutual_info_score
 from scipy.sparse import diags
 import time
 import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
 from multiprocessing import Pool
 import sys
 
 
-def range_delta(n1, k1, d):
-    min_delta = max(- k1 / (k1 - 1) * d / n1, k1 * (d / n1 - 1))
-    max_delta = min(k1 / (k1 - 1) * (1 - d / n1), k1 * d / n1)
+def generate_bsbm(n1, n2, k1, k2, d, delta, Htype=0):
+    # TODO
+    if n1 / k1 != n2 / k2:
+        print(f"{n1/k1} {n2/k2} No considering unequal community size.")
+        sys.exit()
+    elif Htype == 0 and k1 == k2:
+        # Symmetric case
+        min_delta, max_delta = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        q = d / n1 - delta / k1
+        p = q + delta
+        print(f'--For symmetric case n1={n1}, k1={k1}, d={d}, Range of delta ({min_delta}, {max_delta}). '
+              f'Now delta={delta} which make p_diagonal_B={p}, p_offdiagonal_B={q}')
+        # SNRs = get_SNR_bipartite(n1, k1, d, delta)
+        # print(f'--In this case by theory, SNR_A=d={SNRs[0]}, SNR_AA={SNRs[1]}, SNR_H={SNRs[2]}, SNR_HH=SNR_AA')
+        k2 = k1
+        sizes = [int(n1 / k1)] * k1 + [int(n1 / k1)] * k1
+        H = (p - q) * np.identity(k1) + q * np.ones((k1, k2))
+        bsbm = BipartiteSBM(k1, k2, sizes, H)
+    elif Htype == 1 and k1 == 3 and k2 == 4:
+        # consider 1 specific asymmetric case.
+        # There are k_2-k_1+1(2) main diagonal are same as p, otherwise is q
+        p = (7 * d) / (8 * n1) + delta / 2
+        q = (7 * d) / (8 * n1) - delta / 2
+        p = np.around(p, 5)
+        q = np.around(q, 5)
+        min_delta, max_delta = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        print(f'--For asymmetric case k1={k1} k2={k2}, d={d}, Range of delta ({min_delta}, {max_delta}). '
+              f'Now delta={delta} which make p_diagonal_B={p}, p_offdiagonal_B={q}')
+        # Construct bipartite graph
+        sizes = [int(n1 / k1)] * k1 + [int(n2 / k2)] * k2
+        H = np.array([[p, p, q, q], [q, p, p, q], [q, q, p, p]])
+        bsbm = BipartiteSBM(k1, k2, sizes, H)
+    elif Htype == 2 and k1 == 4 and k2 == 4:
+        # consider 1 specific symmetric case.
+        p = d / n1 + delta / 2
+        q = d / n1 - delta / 2
+        p = np.around(p, 5)
+        q = np.around(q, 5)
+        min_delta, max_delta = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        print(f'--For asymmetric case k1={k1} k2={k2}, d={d}, Range of delta ({min_delta}, {max_delta}). '
+              f'Now delta={delta} which make p_diagonal_B={p}, p_offdiagonal_B={q}')
+        # Construct bipartite graph
+        sizes = [int(n1 / k1)] * k1 + [int(n2 / k2)] * k2
+        H = np.array([[p, q, q, p], [p, p, q, q], [q, p, p, q], [q, q, p, p]])
+        bsbm = BipartiteSBM(k1, k2, sizes, H)
+    elif Htype == 3 and k1 == 3 and k2 == 6:
+        p = (3 * d) / (4 * n1) + (2 * delta) / 3
+        q = (3 * d) / (4 * n1) - delta / 3
+        p = np.around(p, 5)
+        q = np.around(q, 5)
+        min_delta, max_delta = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        print(f'--For asymmetric case k1={k1} k2={k2}, d={d}, Range of delta ({min_delta}, {max_delta}). '
+              f'Now delta={delta} which make p_diagonal_B={p}, p_offdiagonal_B={q}')
+        # Construct bipartite graph
+        sizes = [int(n1 / k1)] * k1 + [int(n2 / k2)] * k2
+        H = np.array([[p, p, q, q, q, q], [q, q, p, p, q, q], [q, q, q, q, p, p]])
+        bsbm = BipartiteSBM(k1, k2, sizes, H)
+    else:
+        print("No considering other asymmetric case.")
+        sys.exit()
+    return bsbm
+
+
+def generate_delta_range(n1, n2, k1, k2, d, Htype=0):
+    # TODO
+    if n1 / k1 != n2 / k2:
+        print("No considering unequal community size.")
+        sys.exit()
+    elif Htype == 0 and k1 == k2:
+        min_delta = max(- k1 / (k1 - 1) * d / n1, k1 * (d / n1 - 1))
+        max_delta = min(k1 / (k1 - 1) * (1 - d / n1), k1 * d / n1)
+    elif Htype == 1 and k1 == 3 and k2 == 4:
+        min_delta = max(-7 / 4 * d / n1, 7 / 4 * d / n1 - 2)
+        max_delta = min(2 - 7 / 4 * d / n1, 7 / 4 * d / n1)
+    elif Htype == 2 and k1 == 4 and k2 == 4:
+        min_delta = max(-2 * d / n1, 2 * d / n1 - 2)
+        max_delta = min(2 * d / n1, 2 - 2 * d / n1)
+    elif Htype == 3 and k1 == 3 and k2 == 6:
+        min_delta = max(-9 * d / (8 * n1), 9 * d / (4 * n1) - 3)
+        max_delta = min(9 * d / (4 * n1), 3 / 2 - (9 * d) / (8 * n1))
+    else:
+        print("No considering other asymmetric case.")
+        sys.exit()
     return min_delta, max_delta
-
-
-def asym_range_delta(n1, d, k1=3, k2=4, type=1):
-    min_delta = max(-7 / 2 * d / n1, 7 / 2 * d / n1 - 2)
-    max_delta = min(2 - 7 / 2 * d / n1, 7 / 2 * d / n1)
-    return min_delta, max_delta
-
-
-def symmetric_bipartite(n1, k1, pBd, pBo):
-    k2 = k1
-    sizes = [int(n1 / k1)] * k1 + [int(n1 / k1)] * k1
-    H = (pBd - pBo) * np.identity(k1) + pBo * np.ones((k1, k2))
-    return BipartiteSBM(k1, k2, sizes, H)
 
 
 def get_SNR_bipartite(n1, k1, d, delta):
@@ -99,37 +167,8 @@ def synthetic_exp_sym_bipartite(bsbm):
     return result_data
 
 
-def exp_subprocess(n1, n2, k1, k2, d, delta, times, save_path, WithlambdaB=True):
-    if n1 / k1 != n2 / k2:
-        print("No considering unequal community size.")
-        sys.exit()
-    elif k1 == 3 and k2 == 4:
-        # consider 1 specific asymmetric case.
-        # There are k_2-k_1+1(2) main diagonal are same as p, otherwise is q
-        p = (7 * d) / (4 * n1) + delta / 2
-        q = (7 * d) / (4 * n1) - delta / 2
-        p = np.around(p, 5)
-        q = np.around(q, 5)
-        min_delta, max_delta = asym_range_delta(n1, d, type=1)
-        print(f'--For asymmetric case k1={k1} k2={k2}, d={d}, Range of delta ({min_delta}, {max_delta}). '
-              f'Now delta={delta} which make p_diagonal_B={p}, p_offdiagonal_B={q}')
-        # Construct bipartite graph
-        sizes = [int(n1 / k1)] * k1 + [int(n2 / k2)] * k2
-        H = np.array([[p, p, q, q], [q, p, p, q], [q, q, p, p]])
-        bsbm = BipartiteSBM(k1, k2, sizes, H)
-    elif k1 == k2:
-        # Symmetric case
-        min_delta, max_delta = range_delta(n1, k1, d)
-        q = d / n1 - delta / k1
-        p = q + delta
-        print(f'--For symmetric case n1={n1}, k1={k1}, d={d}, Range of delta ({min_delta}, {max_delta}). '
-              f'Now delta={delta} which make p_diagonal_B={p}, p_offdiagonal_B={q}')
-        SNRs = get_SNR_bipartite(n1, k1, d, delta)
-        print(f'--In this case by theory, SNR_A=d={SNRs[0]}, SNR_AA={SNRs[1]}, SNR_H={SNRs[2]}, SNR_HH=SNR_AA')
-        bsbm = symmetric_bipartite(n1, k1, p, q)
-    else:
-        print("No considering other asymmetric case.")
-        sys.exit()
+def exp_subprocess(n1, n2, k1, k2, d, delta, times, save_path, WithlambdaB=True, Htype=0):
+    bsbm = generate_bsbm(n1, n2, k1, k2, d, delta, Htype)
     results = ""
     if WithlambdaB:
         lambdas = bsbm.getSingulars()
@@ -172,7 +211,7 @@ def print_error(value):
     print(value)
 
 
-def run_exp(ds, deltas, times, save_path=None, n1=3000, n2=3000, k1=3, k2=3, WithlambdaB=True, multiprocessing=True):
+def run_exp(ds, deltas, times, save_path=None, n1=3000, n2=3000, k1=3, k2=3, WithlambdaB=True, Htype=0, multiprocessing=True):
     d_delta_pair = set()
     if os.path.exists(save_path):
         with open(save_path, 'r') as f:
@@ -180,13 +219,13 @@ def run_exp(ds, deltas, times, save_path=None, n1=3000, n2=3000, k1=3, k2=3, Wit
                 row = row.strip().split()
                 d_delta_pair.add((round(float(row[0]), 5), round(float(row[1]), 5)))
     if multiprocessing:
-        p = Pool(4)
+        p = Pool(8)
         for d in ds:
             for delta in deltas:
                 if (round(d, 5), round(delta, 5)) in d_delta_pair:
                     print(f'rho={d}, delta={delta} has been run!')
                     continue
-                p.apply_async(exp_subprocess, args=(n1, n2, k1, k2, d, delta, times, save_path, WithlambdaB, ),
+                p.apply_async(exp_subprocess, args=(n1, n2, k1, k2, d, delta, times, save_path, WithlambdaB, Htype),
                               callback=write_results, error_callback=print_error)
         p.close()
         p.join()
@@ -196,7 +235,7 @@ def run_exp(ds, deltas, times, save_path=None, n1=3000, n2=3000, k1=3, k2=3, Wit
                 if (round(d, 5), round(delta, 5)) in d_delta_pair:
                     print(f'rho={d}, delta={delta} has been run!')
                     continue
-                savepath, results = exp_subprocess(n1, n2, k1, k2, d, delta, times, save_path, WithlambdaB,)
+                savepath, results = exp_subprocess(n1, n2, k1, k2, d, delta, times, save_path, WithlambdaB, Htype)
                 write_results((savepath, results))
 
 
@@ -240,19 +279,9 @@ def read_exp(load_path, WithlambdaB=True, exclude_rho=None, add_path=None, num_r
                 if np.size(ami_results) == 0:
                     print(f"Some parameter d={d}, delta={delta} didn't run!")
                 mean_ami = np.mean(ami_results, 0)[3:] if len(np.shape(ami_results)) == 2 else ami_results[3:]
+                # print(mean_ami)
                 for nr in range(num_result):
                     AMIResults[nr][i] = mean_ami[nr]
-                # full_ami[i] = mean_ami[0]
-                # A_ami[i] = mean_ami[0]
-                # A_num_group[i] = mean_ami[1]
-                # Ahalf_ami[i] = mean_ami[2]
-                # Ahalf_num_group[i] = mean_ami[3]
-                # AA_ami[i] = mean_ami[4]
-                # AA_num_group[i] = mean_ami[5]
-                # AAhalf_ami[i] = mean_ami[6]
-                # AAhalf_num_group[i] = mean_ami[7]
-                # H_ami[i] = mean_ami[8]
-                # H_num_group[i] = mean_ami[9]
                 if WithlambdaB:
                     if lambdas is None:
                         lambdas = np.zeros((np.size(deltas) * np.size(ds), np.size(mean_ami)-num_result))
@@ -364,13 +393,13 @@ def exp4():
     n1 = n2 = 3000
     k1 = k2 = 3
     ds = np.around(np.linspace(10, 30, 21), 2)
-    # ds = [10, 1700]
+    # ds = [10, 1700]y
     min_delta, max_delta = range_delta(n1, k1, d=min(ds))
     deltas = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 29), 5), np.array([]))
     print(deltas.tolist())
 
     WithlambdaB = True
-    multiprocessing = False
+    multiprocessing = True
     fileID = 'amiExp24.3.6' + f'_n1={n1}n2={n2}_k1={k1}k2={k2}_{"lambda" if WithlambdaB else ""}_givenNumgroups_modifyWBH'
     save_path = "./result/detectabilityBipartite/" + fileID + ".txt"
     print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(ds) * np.size(deltas) * times}")
@@ -379,37 +408,102 @@ def exp4():
 
 
 def exp5():
-    times = 1
+    times = 5
     n1 = 3000
     n2 = 4000
     k1 = 3
     k2 = 4
     ds = np.around(np.linspace(10, 30, 21), 2)
+    Htype = 1
     # ds = [10, 1700]
-    min_delta, max_delta = asym_range_delta(n1, d=min(ds), type=1)
+    min_delta = None
+    max_delta = None
+    for d in ds:
+        min_, max_ = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        min_delta = min_ if min_delta is None or min_ > min_delta else min_delta
+        max_delta = max_ if max_delta is None or max_ < min_delta else max_delta
+    deltas = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 29), 5), np.array([]))
+    print(deltas.tolist())
+
+    WithlambdaB = True
+    multiprocessing = False
+    fileID = 'amiExp24.4.22' + f'_n1={n1}n2={n2}_k1={k1}k2={k2}_{"lambda" if WithlambdaB else ""}_asymmetric_givenNumgroups'
+    save_path = "./result/detectabilityBipartite/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(ds) * np.size(deltas) * times}")
+    run_exp(ds, deltas, times, save_path=save_path, n1=n1, n2=n2, k1=k1, k2=k2, WithlambdaB=WithlambdaB, Htype=Htype,
+            multiprocessing=multiprocessing)
+
+
+def exp6():
+    times = 5
+    n1 = 4000
+    n2 = 4000
+    k1 = 4
+    k2 = 4
+    ds = np.around(np.linspace(10, 30, 21), 2)
+    Htype = 2
+    # ds = [10, 1700]
+    min_delta = None
+    max_delta = None
+    for d in ds:
+        min_, max_ = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        min_delta = min_ if min_delta is None or min_ > min_delta else min_delta
+        max_delta = max_ if max_delta is None or max_ < min_delta else max_delta
     deltas = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 29), 5), np.array([]))
     print(deltas.tolist())
 
     WithlambdaB = True
     multiprocessing = True
-    fileID = 'amiExp24.4.16' + f'_n1={n1}n2={n2}_k1={k1}k2={k2}_{"lambda" if WithlambdaB else ""}_asymmetric_givenNumgroups'
+    fileID = 'amiExp24.4.23' + f'_n1={n1}n2={n2}_k1={k1}k2={k2}Htype={Htype}_{"lambda" if WithlambdaB else ""}_asymmetric_givenNumgroups'
     save_path = "./result/detectabilityBipartite/" + fileID + ".txt"
     print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(ds) * np.size(deltas) * times}")
-    run_exp(ds, deltas, times, save_path=save_path, n1=n1, n2=n2, k1=k1, k2=k2, WithlambdaB=WithlambdaB,
+    run_exp(ds, deltas, times, save_path=save_path, n1=n1, n2=n2, k1=k1, k2=k2, WithlambdaB=WithlambdaB, Htype=Htype,
+            multiprocessing=multiprocessing)
+
+
+def exp7():
+    times = 5
+    n1 = 3000
+    n2 = 6000
+    k1 = 3
+    k2 = 6
+    ds = np.around(np.linspace(10, 30, 21), 2)
+    Htype = 3
+    # ds = [10, 1700]
+    min_delta = None
+    max_delta = None
+    for d in ds:
+        min_, max_ = generate_delta_range(n1, n2, k1, k2, d, Htype)
+        min_delta = min_ if min_delta is None or min_ > min_delta else min_delta
+        max_delta = max_ if max_delta is None or max_ < min_delta else max_delta
+    deltas = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 29), 5), np.array([]))
+    print(deltas.tolist())
+
+    WithlambdaB = True
+    multiprocessing = True
+    fileID = 'amiExp24.4.26' + f'_n1={n1}n2={n2}_k1={k1}k2={k2}Htype={Htype}_{"lambda" if WithlambdaB else ""}_asymmetric_givenNumgroups'
+    save_path = "./result/detectabilityBipartite/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(ds) * np.size(deltas) * times}")
+    run_exp(ds, deltas, times, save_path=save_path, n1=n1, n2=n2, k1=k1, k2=k2, WithlambdaB=WithlambdaB, Htype=Htype,
             multiprocessing=multiprocessing)
 
 
 def debug():
-    # For big n
-    n1 = n2 = 3000
+    n1 = n2 = 300
     k1 = k2 = 3
-    WithlambdaB = True
-    fileID = 'amiExp24.3.6' + f'_n1={n1}n2={n2}_k1={k1}k2={k2}_{"lambda" if WithlambdaB else ""}_givenNumgroups_modifyWBH'
-    load_path = "./result/detectabilityBipartite/" + fileID + ".txt"
-    plot_ds, plot_deltas, results, lambdas = read_exp(load_path=load_path, WithlambdaB=WithlambdaB, num_result=14)
-    A_ami, A_num_group, Ahalf_ami, Ahalf_num_group, AA_ami, AA_num_group, AAhalf_ami, AAhalf_num_group, H_ami, H_num_group, BBT_ami, BBT_num_group, BTB_ami, BTB_num_group = \
-        results[0], results[1], results[2], results[3], results[4], results[5], results[6], results[7], results[8], \
-        results[9], results[10], results[11], results[12], results[13]
+    d = 5
+    Htype = 0
+    min_delta, max_delta = generate_delta_range(n1, n2, k1, k2, d, Htype)
+    print(min_delta, max_delta)
+    delta = 0.04
+    bsbm = generate_bsbm(n1, n2, k1, k2, d, delta, Htype=0)
+    lambdas = bsbm.getSingulars()
+    print(f"SNR_H={n1 / k1 * lambdas[1] ** 2 / lambdas[0]}")
+    AA = bsbm.A.dot(bsbm.A)
+    AA = AA - diags(np.diag(AA.toarray()), 0)
+    BBT = AA[:n1, :n1]
+    # NB = bsbm.get_projection_operator(projection_matrix=BBT, operator='WNB')
+    BH = bsbm.get_projection_operator(projection_matrix=BBT, operator='WBH', r=d)
 
 
 if __name__ == '__main__':
@@ -418,5 +512,5 @@ if __name__ == '__main__':
     # exp2()
     # exp3()
     # exp4()
-    exp5()
-    # debug()
+    # exp5()
+    debug()

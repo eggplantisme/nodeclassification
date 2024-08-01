@@ -36,7 +36,7 @@ def get_confusionmatrix(truePartition, cdPartition, trueNumgroup, cdNumgroup):
     return confusionMatrix, CD_ind
 
 
-def get_range_delta(d, n, Z_s, Z_b):
+def get_range_delta(d, n, Z_s, Z_b, HomoD=False):
     """
     For sparse network d << n
     :param d:
@@ -45,11 +45,20 @@ def get_range_delta(d, n, Z_s, Z_b):
     :param Z_b:
     :return:
     """
-    if 0 < d < n / (Z_s + Z_b):
-        min_delta = (Z_s + Z_b) * d / ((1 - Z_s - Z_b) * n)
-        max_delta = min(Z_s, Z_b) * d / n
+    if HomoD is False:
+        if 0 < d < n / (Z_s + Z_b):
+            min_delta = (Z_s + Z_b) * d / ((1 - Z_s - Z_b) * n)
+            max_delta = min(Z_s, Z_b) * d / n
+        else:
+            min_delta, max_delta = None, None
     else:
-        min_delta, max_delta = None, None
+        # consider only sparse case
+        # First Type
+        # min_delta = - d / n
+        # max_delta = (Z_s + Z_b) * d / n
+        # Second Type
+        min_delta = - 2 * d / n
+        max_delta = 2 * d / n
     return min_delta, max_delta
 
 
@@ -122,7 +131,8 @@ def synthetic_exp_full2sub(msbm, givenNumGroup=False, DC=False, BP=False, init_e
 
 
 def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=True, givenNumGroup=False, DC=False,
-                     BP=False, learnqby=None, givenNacab=True, givenTrueEpsilon=False, writeCM=False):
+                   BP=False, learnqby=None, givenNacab=True, givenTrueEpsilon=False, writeCM=False, additionId="",
+                   homoDegree=False, checkSNR=False):
     """
     Here n, rho, d is sub parameter. The full parameter n_f, rho_f, pin, pout should be calculated base on sub
     :param n:
@@ -140,15 +150,49 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=Tr
     :param BP:
     :return:
     """
-    pout = d / n - ((1-rho)**2 / Z_b + rho**2 / Z_s) * delta
-    pin = pout + delta
-    pin = 0 if pin < 1e-10 else pin
-    pout = 0 if pout < 1e-10 else pout
-    if BP:
-        # For BP not use two small pin and pout
-        pin = 1e-5 if pin < 1e-5 else pin
-        pout = 1e-5 if pout < 1e-5 else pout
-    ps = (pin - pout) * np.identity(q) + pout * np.ones((q, q))
+    if homoDegree is False:
+        # Fix pin for both part, that make the average degree of different part different
+        pout = d / n - ((1-rho)**2 / Z_b + rho**2 / Z_s) * delta
+        pin = pout + delta
+        pin = 0 if pin < 1e-10 else pin
+        pout = 0 if pout < 1e-10 else pout
+        if BP:
+            # For BP not use two small pin and pout
+            pin = 1e-5 if pin < 1e-5 else pin
+            pout = 1e-5 if pout < 1e-5 else pout
+        ps = (pin - pout) * np.identity(q) + pout * np.ones((q, q))
+    else:
+        # First type, delta is pin_s - pout, only two eigenvalue
+        # pout = d / n - (rho / Z_s) * delta
+        # pin_s = pout + delta
+        # pin_b = pout + Z_b * rho / ((1 - rho) * Z_s) * delta
+        # pin_s = 0 if pin_s < 1e-10 else pin_s
+        # pin_b = 0 if pin_b < 1e-10 else pin_b
+        # pout = 0 if pout < 1e-10 else pout
+        # ps = pout * np.ones((q, q))
+        # for i in range(Z_s):
+        #     ps[i, i] = pin_s
+        # for i in range(Z_b):
+        #     ps[Z_s + i, Z_s + i] = pin_b
+        # Second type, delta is pin - pout1, eigenvalue is useful
+        pout1 = d / n - (1 / (1 - 2 * rho)) * ((1 - rho) ** 2 / Z_b - rho ** 2 / Z_s) * delta
+        pin = pout1 + delta
+        pout2 = 2 * d / n - ((1 - rho) / Z_b + rho / Z_s) * delta - pout1
+        pout1 = 0 if abs(pout1) < 1e-10 else pout1
+        pout2 = 0 if abs(pout2) < 1e-10 else pout2
+        pin = 0 if abs(pin) < 1e-10 else pin
+        ps = np.zeros((q, q))
+        for i in range(q):
+            for j in range(q):
+                if i == j:
+                    ps[i, i] = pin
+                elif i < Z_s and j < Z_s:
+                    ps[i, j] = pout1
+                elif i >= Z_s and j >= Z_s:
+                    ps[i, j] = pout1
+                else:
+                    ps[i, j] = pout2
+
     n_f = int(n * (Z_s + Z_b) * (Z_b * rho + Z_s * (1 - rho)) / (Z_s * Z_b))
     rho_f = Z_b * rho / (Z_b * rho + Z_s * (1 - rho))
     n_fq = int(n_f / q)
@@ -159,11 +203,21 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=Tr
     results = ""
     # Calc eig of subgraph first
     if Withlambda:
-        lambdas = msbm.get_lambdas(n, rho, Z_s, Z_b, pin, pout)
-        SNR = lambdas[1]**2 / lambdas[0]
+        # if homoDegree is False:
+        #     lambdas = msbm.get_lambdas(n, rho, Z_s, Z_b, pin, pout)
+        #     SNR = lambdas[1]**2 / lambdas[0]
+        # else:
+        P = np.diag([rho / Z_s] * Z_s + [(1 - rho) / Z_b] * Z_b)
+        Q = n * ps
+        lambdas = msbm.get_lambdas_general(P, Q)
     for t in range(times):
         start = time.time()
-        print(f"EXP pid={os.getpid()} begin... rho={rho}, delta={delta}, times={t}, pin={pin}, pout={pout}")
+        print(f"EXP pid={os.getpid()} begin... rho={rho}, delta={delta}, times={t}")
+        if homoDegree is False:
+            print(f'pin={pin}, pout={pout}')
+        else:
+            print(f'pin_s={pin}, pin_b={pout1}, pout={pout2}')
+            print(f'lambdas_PQ={lambdas}')
         # if BP and SNR < 1:
         #     sub_ami = 0
         #     sub_num_groups = 1
@@ -178,8 +232,11 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=Tr
             init_epsilon = np.around(pout / pin, 6)
         strId = f'n={n}d={d}Zs={Z_s}Zb={Z_b}rho={rho}delta={delta}t={t}{"givenNumGroup" if givenNumGroup else ""}_'\
                 f'{"DC" if DC else ""}_{"BP" if BP else ""}_{"MDL" if learnqby == "MDL" else "FE"}_'\
-                f'{"TrueEpsilon" if givenTrueEpsilon else ""}_moreq'
-        result_data = synthetic_exp_full2sub(msbm, givenNumGroup=givenNumGroup, DC=DC, BP=BP, init_epsilon=init_epsilon, learnqby=learnqby, givenNacab=False, strId=strId, writeCM=writeCM)
+                f'{"TrueEpsilon" if givenTrueEpsilon else ""}_{additionId}'
+        if checkSNR:
+            result_data = (0, 1)
+        else:
+            result_data = synthetic_exp_full2sub(msbm, givenNumGroup=givenNumGroup, DC=DC, BP=BP, init_epsilon=init_epsilon, learnqby=learnqby, givenNacab=False, strId=strId, writeCM=writeCM)
         sub_ami, sub_num_groups = result_data[0], result_data[1]
         
         results += f'{rho} {delta} {t} {sub_ami} {sub_num_groups}'
@@ -206,7 +263,8 @@ def print_error(value):
 
 
 def run_exp(rhos, deltas, times, save_path=None, q=3, n=600, d=300, Z_s=None, Z_b=None, Withlambda=False, multiprocessing=True,
-            givenNumGroup=False, DC=False, BP=False, learnqby=None, givenNacab=True, givenTrueEpsilon=False, writeCM=False):
+            givenNumGroup=False, DC=False, BP=False, learnqby=None, givenNacab=True, givenTrueEpsilon=False, writeCM=False,
+            additionId="", homoDegree=False, checkSNR=False):
     rho_delta_pair = set()
     if os.path.exists(save_path):
         with open(save_path, 'r') as f:
@@ -221,7 +279,7 @@ def run_exp(rhos, deltas, times, save_path=None, q=3, n=600, d=300, Z_s=None, Z_
                     print(f'rho={rho}, delta={delta} has been run!')
                     continue
                 p.apply_async(exp_subprocess, args=(n, q, Z_s, Z_b, d, rho, delta, times, save_path, Withlambda, givenNumGroup,
-                                                    DC, BP, learnqby, givenNacab, givenTrueEpsilon, writeCM),
+                                                    DC, BP, learnqby, givenNacab, givenTrueEpsilon, writeCM, additionId, homoDegree, checkSNR),
                               callback=write_results, error_callback=print_error)
         p.close()
         p.join()
@@ -232,11 +290,11 @@ def run_exp(rhos, deltas, times, save_path=None, q=3, n=600, d=300, Z_s=None, Z_
                     print(f'rho={rho}, delta={delta} has been run!')
                     continue
                 savepath, results = exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, save_path, Withlambda, givenNumGroup, DC,
-                                                   BP, learnqby, givenNacab, givenTrueEpsilon, writeCM)
+                                                   BP, learnqby, givenNacab, givenTrueEpsilon, writeCM, additionId, homoDegree, checkSNR)
                 write_results((savepath, results))
 
 
-def read_exp(load_path, Withlambda=False, exclude_rho=None, add_paths=None):
+def read_exp(load_path, Withlambda=False, exclude_rho=None, exclude_z=None, add_paths=None):
     """
     read the results file from run_exp
     :param load_path:
@@ -257,7 +315,7 @@ def read_exp(load_path, Withlambda=False, exclude_rho=None, add_paths=None):
                 results_list[i] += ["0"] * (9 - len(results_list[i]))
         results = np.round(np.float64(results_list), decimals=5)
         rhos = np.setdiff1d(np.unique(results[:, 0]), np.array(exclude_rho))
-        zs = np.unique(results[:, 1])
+        zs = np.setdiff1d(np.unique(results[:, 1]), np.array(exclude_z))
         # full_ami = np.zeros(np.size(zs) * np.size(rhos))
         sub_ami = np.zeros(np.size(zs) * np.size(rhos))
         # snr_nm = np.zeros(np.size(zs) * np.size(rhos)) if Withsnr else None
@@ -969,6 +1027,184 @@ def exp19():
             givenNumGroup=givenNumGroup, DC=DC, BP=BP, learnqby=learnqby, givenTrueEpsilon=givenTrueEpsilon, writeCM=writeCM)
 
 
+def exp20():
+    """
+    sub parameter is fix as n, d. rho, delta belong to sub
+    Try BP learnq by FreeEnergy 10 times for each q
+    :return:
+    """
+    times = 1
+    n = 10000
+    d = 16
+    Z_s = 2
+    Z_b = 2
+    q = Z_s + Z_b
+    # sizes = [[n_q] * Z_s, [n_q] * Z_b]
+    # rho = np.setdiff1d(np.around(np.linspace(0, 1, 51), 2), np.array([]))
+    rho = np.array([0.1])
+    # rho = np.setdiff1d(np.around(np.linspace(0, 1, 26), 2), np.array([]))
+    # rho = rho[:9]
+    min_delta, max_delta = get_range_delta(d, n, Z_s, Z_b)
+    # delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 60), 5), np.array([0]))
+    delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 30), 5), np.array([0]))
+    delta = delta[13:]
+    print(delta)
+    Withlambda = True
+    givenNumGroup = False
+    DC = False
+    BP = True
+    learnqby = 'FE'
+    givenTrueEpsilon = True
+    writeCM = True
+    additionId = "rho0.1_moreq"
+    multiprocessing = True
+    fileID = 'amiExp24.4.24' + f'_n={n}_q={q}_d={round(d)}_{"lambda" if Withlambda else ""}_'\
+                              f'{"givenNumGroup" if givenNumGroup else ""}_' \
+                              f'{"DC" if DC else ""}_{"BP" if BP else ""}_learnqby{"MDL" if learnqby == "MDL" else "FE"}_'\
+                              f'{"givenTrueEpsilon" if givenTrueEpsilon else ""}_{"writeCM" if writeCM else ""}'\
+                              f'1exp20learn1{additionId}_recordf'
+    save_path = "./result/detectabilityWithMeta/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(rho) * np.size(delta) * times}",
+          f'min_delta={min_delta} max_delta={max_delta}, Withlambda={Withlambda}, givenNumberGroup={givenNumGroup}, '
+          f'DC={DC}, BP={BP}')
+    run_exp(rho, delta, times, save_path, q, n, d, Z_s, Z_b, Withlambda=Withlambda, multiprocessing=multiprocessing,
+            givenNumGroup=givenNumGroup, DC=DC, BP=BP, learnqby=learnqby, givenTrueEpsilon=givenTrueEpsilon, writeCM=writeCM, additionId=additionId)
+
+
+def exp21():
+    """
+    sub parameter is fix as n, d. rho, delta belong to sub
+    Try BP learnq by FreeEnergy 10 times for each q
+    :return:
+    """
+    times = 1
+    n = 10000
+    d = 16
+    Z_s = 2
+    Z_b = 2
+    q = Z_s + Z_b
+    # sizes = [[n_q] * Z_s, [n_q] * Z_b]
+    # rho = np.setdiff1d(np.around(np.linspace(0, 1, 51), 2), np.array([]))
+    rho = np.array([0.32])
+    # rho = np.setdiff1d(np.around(np.linspace(0, 1, 26), 2), np.array([]))
+    # rho = rho[:9]
+    min_delta, max_delta = get_range_delta(d, n, Z_s, Z_b)
+    # delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 60), 5), np.array([0]))
+    delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 30), 5), np.array([0]))
+    delta = delta[13:]
+    print(delta)
+    Withlambda = True
+    givenNumGroup = False
+    DC = False
+    BP = True
+    learnqby = 'FE'
+    givenTrueEpsilon = True
+    writeCM = True
+    additionId = "rho0.32_moreq_4significantf"
+    multiprocessing = True
+    fileID = 'amiExp24.5.2' + f'_n={n}_q={q}_d={round(d)}_{"lambda" if Withlambda else ""}_'\
+                              f'{"givenNumGroup" if givenNumGroup else ""}_' \
+                              f'{"DC" if DC else ""}_{"BP" if BP else ""}_learnqby{"MDL" if learnqby == "MDL" else "FE"}_'\
+                              f'{"givenTrueEpsilon" if givenTrueEpsilon else ""}_{"writeCM" if writeCM else ""}'\
+                              f'1exp20learn1{additionId}_recordf'
+    save_path = "./result/detectabilityWithMeta/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(rho) * np.size(delta) * times}",
+          f'min_delta={min_delta} max_delta={max_delta}, Withlambda={Withlambda}, givenNumberGroup={givenNumGroup}, '
+          f'DC={DC}, BP={BP}')
+    run_exp(rho, delta, times, save_path, q, n, d, Z_s, Z_b, Withlambda=Withlambda, multiprocessing=multiprocessing,
+            givenNumGroup=givenNumGroup, DC=DC, BP=BP, learnqby=learnqby, givenTrueEpsilon=givenTrueEpsilon, writeCM=writeCM, additionId=additionId)
+
+
+def exp22():
+    """
+    sub parameter is fix as n, d. rho, delta belong to sub
+    Try BP learnq by FreeEnergy 10 times for each q
+    :return:
+    """
+    times = 5
+    n = 10000
+    d = 16
+    Z_s = 2
+    Z_b = 2
+    q = Z_s + Z_b
+    # sizes = [[n_q] * Z_s, [n_q] * Z_b]
+    rho = np.setdiff1d(np.around(np.linspace(0, 1, 51), 2), np.array([]))
+    # rho = np.array([0.32])
+    # rho = np.setdiff1d(np.around(np.linspace(0, 1, 26), 2), np.array([]))
+    # rho = rho[:9]
+    min_delta, max_delta = get_range_delta(d, n, Z_s, Z_b)
+    # delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 60), 5), np.array([0]))
+    delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 30), 5), np.array([0]))
+    # delta = delta[13:]
+    print(delta)
+    Withlambda = True
+    givenNumGroup = False
+    DC = False
+    BP = True
+    learnqby = 'FE'
+    givenTrueEpsilon = True
+    writeCM = False
+    additionId = "rhoall_moreq_4sig_skipSNR<1"
+    multiprocessing = True
+    fileID = 'amiExp24.5.4' + f'_n={n}_q={q}_d={round(d)}_{"lambda" if Withlambda else ""}_'\
+                              f'{"givenNumGroup" if givenNumGroup else ""}_' \
+                              f'{"DC" if DC else ""}_{"BP" if BP else ""}_learnqby{"MDL" if learnqby == "MDL" else "FE"}_'\
+                              f'{"givenTrueEpsilon" if givenTrueEpsilon else ""}_{"writeCM" if writeCM else ""}'\
+                              f'1exp20learn1{additionId}_recordf'
+    save_path = "./result/detectabilityWithMeta/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(rho) * np.size(delta) * times}",
+          f'min_delta={min_delta} max_delta={max_delta}, Withlambda={Withlambda}, givenNumberGroup={givenNumGroup}, '
+          f'DC={DC}, BP={BP}')
+    run_exp(rho, delta, times, save_path, q, n, d, Z_s, Z_b, Withlambda=Withlambda, multiprocessing=multiprocessing,
+            givenNumGroup=givenNumGroup, DC=DC, BP=BP, learnqby=learnqby, givenTrueEpsilon=givenTrueEpsilon, writeCM=writeCM, additionId=additionId)
+
+
+def exp23():
+    """
+        Try homo average degree for different part
+    """
+    times = 1
+    n = 6000
+    d = 15
+    Z_s = 2
+    Z_b = 3
+    q = Z_s + Z_b
+    # sizes = [[n_q] * Z_s, [n_q] * Z_b]
+    rho = np.setdiff1d(np.around(np.linspace(0, 0.5, 26), 2), np.array([0, 0.5]))
+    # rho = np.array([0.32])
+    # rho = np.setdiff1d(np.around(np.linspace(0, 1, 26), 2), np.array([]))
+    # rho = rho[:9]
+    homoDegree = True
+    min_delta, max_delta = get_range_delta(d, n, Z_s, Z_b, HomoD=homoDegree)
+    # delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 60), 5), np.array([0]))
+    delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 30), 5), np.array([0]))
+    # delta = delta[13:]
+    print(delta)
+    Withlambda = True
+    givenNumGroup = False
+    DC = False
+    BP = False
+    learnqby = None
+    givenTrueEpsilon = False
+    writeCM = False
+    additionId = "2ndType"
+    checkSNR = True
+    multiprocessing = False
+    fileID = 'amiExp24.5.10' + f'_n={n}_q={q}_d={round(d)}_{"lambda" if Withlambda else ""}_' \
+                              f'{"givenNumGroup" if givenNumGroup else ""}_' \
+                              f'{"DC" if DC else ""}_{"BP" if BP else ""}_' \
+                              f'{"givenTrueEpsilon" if givenTrueEpsilon else ""}_{"writeCM" if writeCM else ""}_{"HomoD" if homoDegree else ""}_' \
+                              f'{"CheckSNR" if checkSNR else ""}_' \
+                              f'{additionId}'
+    save_path = "./result/detectabilityWithMeta/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(rho) * np.size(delta) * times}",
+          f'min_delta={min_delta} max_delta={max_delta}, Withlambda={Withlambda}, givenNumberGroup={givenNumGroup}, '
+          f'DC={DC}, BP={BP}')
+    run_exp(rho, delta, times, save_path, q, n, d, Z_s, Z_b, Withlambda=Withlambda, multiprocessing=multiprocessing,
+            givenNumGroup=givenNumGroup, DC=DC, BP=BP, learnqby=learnqby, givenTrueEpsilon=givenTrueEpsilon,
+            writeCM=writeCM, additionId=additionId, homoDegree=homoDegree, checkSNR=checkSNR)
+
+
 if __name__ == '__main__':
     # exp0()
     # exp1()
@@ -989,4 +1225,5 @@ if __name__ == '__main__':
     # exp16()
     # exp17()
     # exp18()
-    exp19()
+    # exp19()
+    exp23()

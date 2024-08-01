@@ -97,7 +97,7 @@ class MetaSBM:
     @staticmethod
     def get_lambdas(n, rho, Z_s, Z_b, pin, pout):
         """
-        Eigenvalues of subgraph in Minority Paper
+        PQ Eigenvalues of subgraph in Minority Paper
         :param n: Nodes number in subgraph
         :param rho:
         :param Z_s:
@@ -131,6 +131,24 @@ class MetaSBM:
             result.append(lambda3)
             result.append(lambda2) if Z_s != 1 else None
         return result
+
+    @staticmethod
+    def get_lambdas_homoDegree(n, d, Z_s, Z_b, rho, delta, Type=2):
+        if Type == 2:
+            lambda_1 = d
+            lambda_2 = n * (1 - rho) / Z_b * delta
+            lambda_3 = n * (rho * (1 - rho) / (1 - 2 * rho)) * (1 / Z_s - 1 / Z_b) * delta
+            lambda_4 = n * rho / Z_s * delta
+            eigva = [lambda_1, lambda_2, lambda_3, lambda_4]
+            sorteigva = sorted(eigva, key=lambda v: np.abs(v), reverse=True)
+            return sorteigva
+
+    @staticmethod
+    def get_lambdas_general(P, Q):
+        eigva, _ = eig(P.dot(Q))
+        sorteigva = sorted(eigva, key=lambda v: np.abs(v), reverse=True)
+        sorteigva = [eigv.real if isinstance(eigv, complex) and abs(eigv.imag) < 1e-4  else eigv for eigv in sorteigva]
+        return sorteigva
 
     def general_get_snr(self, withMeta=False):
         """ Get SNR with general method
