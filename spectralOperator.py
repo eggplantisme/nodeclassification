@@ -83,15 +83,27 @@ class WeightedBetheHessian(BetheHessian):
     def __init__(self, A, r=None, regularizer='BHa'):
         super().__init__(A, r, regularizer)
 
+    def calc_r(self, regularizer='BHa'):
+        if self.r is None:
+            A = self.A
+            if regularizer.startswith('BHa'):
+                # set r to square root of average degree
+                self.r = np.sqrt((self.A**2).sum() / self.A.shape[0])-1
+        # if last character is 'n' then use the negative version of the BetheHessian
+        if regularizer[-1] == 'n':
+            self.r = -self.r
+
     def build_operator(self):
         """
         Construct Weighted Bethe Hessian, e.g., in Saade et al
         B_ij = \delta_ij(1 + \sum_{k\in\partial i}\frac{w_ik^2}{r^2-w_ik^2})-\frac{rw_ijA_ij}{r^2-w_ij^2}
         """
         n = self.A.shape[0]
-        A = self.A / self.A.max()  # Normalize
-        A = self.r * self.A.tanh()
+        A = self.A
+        # A = self.A / self.A.max()  # Normalize
+        # A = self.r * self.A.tanh()
         # print("Weighted BH building...")
+        A = test_sparse_and_transform(A)
         d = csr_array(A ** 2 / (csr_array(self.r ** 2 * np.ones((n, n))) - A ** 2)).sum(axis=1).flatten().astype(float)
         d = diags(d, 0)
         d = d + csr_array(np.identity(n))

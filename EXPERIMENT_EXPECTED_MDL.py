@@ -4,6 +4,31 @@ from EXPERIMENT_MINORITY import get_range_delta
 from _CommunityDetect import *
 
 
+def desc_length(A, q, partition):
+    N = N = np.shape(A)[0]
+    E = np.sum(A) / 2
+    x = q * (q + 1) / (2 * E)
+    hx = ((1 + x) * np.log(1 + x) - x * np.log(x))
+    Lt = E * hx + N * np.log(q)
+    It = 0
+    unique_partition = np.unique(partition)
+    # St = E
+    for r in unique_partition:
+        for s in unique_partition:
+            r_index = np.where(partition == r)[0]
+            s_index = np.where(partition == s)[0]
+            n_r = np.size(r_index)
+            n_s = np.size(s_index)
+            ers = np.sum(A[np.ix_(r_index, s_index)])
+            # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
+            mrs = ers / (2 * E)
+            wr = n_r / N
+            ws = n_s / N
+            It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
+    Epsilonb = Lt - E * It  # equation (6) in "Parsimonious module inference in large networks"
+    return Epsilonb
+
+
 def run_exp(rhos, deltas, times, save_path=None, q=3, n=600, d=300, Z_s=None, Z_b=None, multiprocessing=True):
     rho_delta_pair = set()
     if os.path.exists(save_path):
@@ -137,21 +162,21 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, save_path):
         x = q * (q + 1) / (2 * E)
         hx = ((1 + x) * np.log(1 + x) - x * np.log(x))
         Lt = E * hx + N * np.log(q)
-        # It = 0
-        St = E
+        It = 0
+        # St = E
         unique_partition = list(range(q))
         for r in unique_partition:
             for s in unique_partition:
                 n_r = Enrs[r]
                 n_s = Enrs[s]
                 ers = Eers[r, s]
-                St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
-                # mrs = ers / (2 * E)
-                # wr = n_r / N
-                # ws = n_s / N
-                # It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
-        Epsilon = Lt + St
-        # Epsilonb = Lt - E * It
+                # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
+                mrs = ers / (2 * E)
+                wr = n_r / N
+                ws = n_s / N
+                It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
+        # Epsilon = Lt + St
+        Epsilon = Lt - E * It
         results += f'{Epsilon} '
         Epsilons.append(Epsilon)
     q_minMDL = np.argmin(Epsilons) + 1
@@ -175,5 +200,21 @@ def exp0():
     run_exp(rhos, deltas, times, save_path, q, n, d, Z_s, Z_b, multiprocessing=False)
 
 
+def exp25_1_31():
+    times = 1
+    n = 6000
+    d = 15
+    Z_s = 2
+    Z_b = 2
+    q = Z_s + Z_b
+    rhos = np.setdiff1d(np.around(np.linspace(0, 0.48, 13), 2), np.array([0, 1]))
+    min_delta, max_delta = get_range_delta(d, n, Z_s, Z_b)
+    deltas = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 30), 5), np.array([0]))
+    save_path = "./result/expectedMDL/eMDL.25.1.31_v2epsilonb.txt"
+    multiprocessing = True
+    run_exp(rhos, deltas, times, save_path, q, n, d, Z_s, Z_b, multiprocessing=multiprocessing)
+
+
 if __name__ == '__main__':
-    exp0()
+    # exp0()
+    exp25_1_31()

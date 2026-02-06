@@ -166,7 +166,8 @@ class BipartiteSBM(SBMMatrix):
         _, s, _ = np.linalg.svd(self.H)
         return s
 
-    def get_projection_operator(self, projection_matrix, operator='WNB', r=0):
+    @staticmethod
+    def get_projection_operator(projection_matrix, operator='WNB', r=0):
         """
         :param operator: WNB, WBH
         :param r: parameter for WBH
@@ -263,6 +264,110 @@ class PoissonSBM:
             return BH
         else:
             pass
+
+
+class DCSBM(Matrix):
+    def __init__(self, sizes, ps, lam):
+        super().__init__(np.sum(sizes))
+        self.sizes = sizes
+        self.ps = ps
+        self.lam = lam
+        if len(sizes) == len(ps):
+            self.g = None
+            self.groupId = []
+            self.construct()
+        else:
+            print("Parameter Wrong: please check sizes or ps!")
+            sys.exit()
+
+    @staticmethod
+    def poisson_normalized(n, lam=5, min_val=1, max_val=3, random_seed=None):
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+            # Step 1: 生成 Poisson 样本
+        raw = np.random.poisson(lam, size=n).astype(float)
+
+        # Step 2: 若全为0，则退化为均匀分布
+        if np.all(raw == 0):
+            raw = np.ones(n)
+
+        # Step 3: 初步归一化（以便再压缩范围）
+        raw /= raw.sum()
+
+        # Step 4: 缩放到目标区间（线性变换+归一化）
+        # 先线性拉伸（确保落在 min_val/max_val 范围内）
+        scaled = raw * (max_val - min_val)
+        scaled += min_val
+
+        # # Step 5: 再次归一化以确保和为 1，且不违反上下限
+        # scaled /= scaled.sum()
+
+        # 校验是否满足上下界（可以略松一点）
+        assert np.all(scaled >= min_val * 0.9)
+        assert np.all(scaled <= max_val * 1.1)
+        # assert np.isclose(scaled.sum(), 1.0)
+
+        return scaled
+
+    def construct(self):
+        gid = 0
+        for s in self.sizes:
+            self.groupId += [gid] * int(s)
+            gid += 1
+        self.groupId = np.array(self.groupId)
+        d_hat = []
+        for s in self.sizes:
+            d_hat += self.poisson_normalized(s, self.lam).tolist()
+        d_hat = np.array(d_hat)
+        # 创建连接概率矩阵 P = d_i * d_j * p_{c_i, c_j}
+        d_hat = d_hat.reshape(-1, 1)
+        d_product = d_hat @ d_hat.T  # 外积 (n x n)
+        print(d_product)
+        # 社团连接概率矩阵映射
+        ps_matrix = self.ps[self.groupId[:, None], self.groupId[None, :]]  # (n x n)
+
+        P = d_product * ps_matrix
+        np.fill_diagonal(P, 0.0)  # 去掉自环
+        P = np.clip(P, 0, 1)  # 确保合法概率
+        print(P)
+
+        # 只保留上三角部分（无向图）
+        upper_tri_mask = np.triu(np.random.rand(self.n, self.n), k=1) < np.triu(P, k=1)
+        edges = np.transpose(np.nonzero(upper_tri_mask))  # shape (num_edges, 2)
+
+        # 构建 networkx 图
+        self.g = nx.Graph()
+        self.g.add_nodes_from(range(self.n))
+        self.g.add_edges_from((i, j) for i, j in edges)
+
+        self.A = nx.to_scipy_sparse_array(self.g)
+
+    def get_operator(self, operator='A', r=0):
+        """
+        :param operator: A, L, NB, BH
+        :param r: parameter for BH
+        """
+        if operator == 'A':
+            return self.A
+        elif operator == 'L':
+            D = diags(self.A.sum(axis=1).flatten().astype(float))
+            L = D - self.A
+            return L
+        elif operator == 'NB':
+            edges = []
+            x, y, _ = find(self.A)
+            for i, x_i in enumerate(x):
+                edges.append((x_i, y[i]))
+            e = len(edges)
+            B = np.zeros((e, e))
+            for i in range(len(edges)):
+                for j in range(len(edges)):
+                    if edges[i][1] == edges[j][0] and edges[i][0] != edges[j][1]:
+                        B[i, j] = 1
+                    else:
+                        B[i, j] = 0
+            return csr_array(B)
 
 def main():
     # hierarchy = generation.create2paramGHRG(n=3**9, snr=25, c_bar=38, n_levels=3, groups_per_level=3)

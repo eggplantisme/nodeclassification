@@ -1,5 +1,5 @@
 import time
-
+import math
 import numpy as np
 from scipy.sparse.linalg import eigsh, inv
 from scipy.sparse import eye, diags, issparse, csr_array, find, hstack, vstack
@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 
 class HyperSBM:
-    def __init__(self, sizes, ps_dict):
+    def __init__(self, sizes, ps_dict, slow=False):
         """
         Initial hyper SBM
         :param sizes: the sizes of each community
@@ -22,14 +22,70 @@ class HyperSBM:
         self.ps_dict = ps_dict
         self.A = dict()  # adjacent list for different order of edges
         self.groupId = []
+        self.q = 0
         self.H = None
         self.hyper_g = None
         self.bipartite_g = None
         self.bipartite_A = None
         self.e = 0  # number of edges
-        self.construct()
+        self.Ks = set()
+        if slow:
+            self.construct_slow()
+        else:
+            self.construct()
 
     def construct(self):
+        gid = 0
+        for s in self.sizes:
+            self.groupId += [gid] * int(s)
+            gid += 1
+        self.groupId = np.array(self.groupId)
+        self.q = gid
+        data = []
+        row_ind = []
+        col_ind = []
+        group_starts = dict()
+        group_ends = dict()
+        for key in self.ps_dict.keys():
+            print(f"Generating hyper edges for order {key}...")
+            self.A[key] = []
+            # Fast generation of hedges
+            for gindex in itertools.combinations_with_replacement(range(gid), r=key):
+                gindex = tuple(gindex)
+                p = np.array(self.ps_dict[key])[gindex]
+                gis, gis_counts = np.unique(gindex, return_counts=True)
+                possible_num_hedges = 1
+                for gi, gi_counts in zip(gis, gis_counts):
+                    possible_num_hedges *= math.comb(self.sizes[gi], gi_counts)
+                possible_num_hedges *= p
+                possible_num_hedges = int(possible_num_hedges)
+                # print(f"\t group set {gindex} have {possible_num_hedges} hedges")
+                for i in range(possible_num_hedges):
+                    hedge = []
+                    for gi, gi_counts in zip(gis, gis_counts):
+                        if gi not in group_starts:
+                            group_starts[gi] = int(np.sum(self.sizes[:gi]))
+                        if gi not in group_ends:
+                            group_ends[gi] = int(np.sum(self.sizes[:gi + 1]))
+                        # hedge_part = (group_ends[gi] - group_starts[gi]) * np.random.random_sample(size=(gi_counts,)) + \
+                        #              group_starts[gi]
+                        # hedge_part = hedge_part.astype(int)
+                        hedge_part = random.sample(list(range(group_starts[gi], group_ends[gi])), gi_counts)  # maybe slow for lots of nodes.
+                        # hedge.extend(hedge_part)
+                        for j in hedge_part:
+                            hedge.append(j)
+                    self.A[key].append(hedge)
+                    data += [1] * key
+                    row_ind += list(hedge)
+                    col_ind += [self.e] * key
+                    self.e += 1
+                    self.Ks.add(key)
+        # print(np.unique(data))
+        # if there exist same (row, col), then the corresponding data will be added
+        self.H = csr_array((data, (row_ind, col_ind)), shape=(self.n, self.e))
+        # print(np.unique(self.H.toarray()))
+
+    def construct_slow(self):
         gid = 0
         for s in self.sizes:
             self.groupId += [gid] * int(s)
@@ -58,6 +114,7 @@ class HyperSBM:
                         row_ind += list(index)
                         col_ind += [self.e] * key
                         self.e += 1
+        print(f'num of edge {self.e}')
         self.H = csr_array((data, (row_ind, col_ind)))
         # print(np.shape(self.H))
         self.hyper_g = hnx.Hypergraph.from_numpy_array(self.H.toarray())
@@ -103,6 +160,7 @@ class HyperSBM:
                     if self.H[i, mu] == 1:
                         directed_hyperedges.append((i, mu))
             print(f'Non-backtrack constructing for {directed_hyperedge_size} directed node-hyperEdge pairs...')
+            print(f'{len(directed_hyperedges)}')
             for index in tqdm(itertools.product(range(directed_hyperedge_size), repeat=2)):
                 i = index[0]
                 j = index[1]
@@ -115,6 +173,25 @@ class HyperSBM:
                 else:
                     B[i, j] = 0
             return csr_array(B)
+        elif operator == "BH":
+            edge_order = self.H.sum(axis=0).flatten()
+            D = None
+            A = None
+            for k in self.Ks:
+                edge_index = np.where(edge_order == k)[0]
+                Hk = self.H[:, edge_index]
+                Dk = diags(Hk.sum(axis=1).flatten().astype(float))
+                Ak = Hk.dot(Hk.T) - diags(Hk.dot(Hk.T).diagonal())
+                if D is None:
+                    D = (k-1)/((1-r)*(r+k-1))*Dk
+                else:
+                    D += (k-1)/((1-r)*(r+k-1))*Dk
+                if A is None:
+                    A = r/((1-r)*(r+k-1))*Ak
+                else:
+                    A += r/((1-r)*(r+k-1))*Ak
+            B = eye(D.shape[0]) - D + A
+            return B
         else:
             pass
 
@@ -133,6 +210,51 @@ class HyperSBM:
             row_ind.append(edge[1])
             col_ind.append(edge[0])
         return csr_array((data, (row_ind, col_ind)))
+
+    @staticmethod
+    def get_projection_operator(projection_matrix, operator='WNB', r=0):
+        """
+        :param operator: WNB, WBH
+        :param r: parameter for WBH
+        """
+        if operator == 'WNB':
+            edges = []
+            x, y, _ = find(projection_matrix)
+            for i, x_i in enumerate(x):
+                edges.append((x_i, y[i]))
+            e = len(edges)
+            B = np.zeros((e, e))
+            for i in range(len(edges)):
+                for j in range(len(edges)):
+                    if edges[i][1] == edges[j][0] and edges[i][0] != edges[j][1]:
+                        B[i, j] = projection_matrix[edges[i][0], edges[i][1]]
+                    else:
+                        B[i, j] = 0
+            return csr_array(B)
+        elif operator == 'WBH':
+            n1 = np.shape(projection_matrix)[0]
+            BBT = projection_matrix
+            # BBT = BBT / BBT.max() # Normalize
+            # r = np.sqrt(BBT.sum() / BBT.shape[0])
+            # BBT = r * BBT.tanh()
+            d = csr_array(BBT ** 2 / (csr_array(r ** 2 * np.ones((n1, n1))) - BBT ** 2)).sum(axis=1).flatten().astype(
+                float)
+            d = diags(d, 0)
+            d = d + csr_array(np.identity(n1))
+            BH = d - csr_array((r * BBT) / (csr_array(r ** 2 * np.ones((n1, n1))) - BBT ** 2))
+            return BH
+
+    def save_txt(self, path):
+        """ save hyperedge list into txt """
+        with open(path, 'w') as fw:
+            for key in self.A.keys():
+                for hedge in self.A[key]:
+                    fw.write(f"{' '.join([str(node) for node in hedge])}\n")
+
+    def save_parameter(self, path):
+        """ save sizes and ps_dict into npz """
+        np.savez(path, n_prior=np.array(self.sizes)/self.n, ps_prior=self.ps_dict)
+
 
 
 class UniformSymmetricHSBM(HyperSBM):
@@ -183,7 +305,7 @@ class UniformSymmetricHSBM(HyperSBM):
 
 
 class UnUniformSymmetricHSBM(HyperSBM):
-    def __init__(self, n, q, Ks, cin, cout):
+    def __init__(self, n, q, Ks, cin, cout, slow=False):
         """
         HyperGraph generated by UnUniformSymmetricHyperSBM:
         """
@@ -203,7 +325,7 @@ class UnUniformSymmetricHSBM(HyperSBM):
                     cs[index] = cout
             ps = cs / (n ** (k-1))
             ps_dict[k] = ps
-        super().__init__(sizes, ps_dict)
+        super().__init__(sizes, ps_dict, slow)
 
     def get_operator(self, operator='BH', r=0):
         if operator == "BH":
@@ -243,5 +365,19 @@ def main_test():
     print(f"Time for constructing operator: {time.time() - start}")
 
 
+def main_save_mp():
+    n = 100
+    q = 2
+    Ks = [2, 3]
+    cin = 20
+    cout = 2
+    hsbm = UnUniformSymmetricHSBM(n, q, Ks, cin, cout)
+    print(f'# of nodes {hsbm.n}, # of edges {hsbm.e}')
+    path = "other/hypergraph_message_passing/data/jiaze_synthetic/"
+    hsbm.save_txt(path + "test_sample.txt")
+    hsbm.save_parameter(path + "test_parameter.npz")
+
+
 if __name__ == '__main__':
-    main_test()
+    # main_test()
+    main_save_mp()

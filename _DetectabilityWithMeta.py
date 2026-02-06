@@ -147,7 +147,7 @@ class MetaSBM:
     def get_lambdas_general(P, Q):
         eigva, _ = eig(P.dot(Q))
         sorteigva = sorted(eigva, key=lambda v: np.abs(v), reverse=True)
-        sorteigva = [eigv.real if isinstance(eigv, complex) and abs(eigv.imag) < 1e-4  else eigv for eigv in sorteigva]
+        sorteigva = [eigv.real if isinstance(eigv, complex) and abs(eigv.imag) < 1e-4 else eigv for eigv in sorteigva]
         return sorteigva
 
     def general_get_snr(self, withMeta=False):

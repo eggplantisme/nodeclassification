@@ -1,2 +1,2 @@
 # Detectability of Community Structure
-This repo is research on detectability. Include metadata, minority, bipartite and hypergraph.
+This repo if for research on community detectability. Include metadata, minority, bipartite and hypergraph.

@@ -25,12 +25,13 @@ class CommunityDetect:
         self.d = None
         self.n = None
 
-    def BetheHessian(self, num_groups=None, help_evec=None, help_num_groups=None, return_evec=False, weighted=False):
+    def BetheHessian(self, num_groups=None, help_evec=None, help_num_groups=None, return_evec=False, weighted=False, only_assortative=False):
         BHa_pos = BetheHessian(self.A, regularizer='BHa') if weighted is False else \
             WeightedBetheHessian(self.A, regularizer='BHa')
         BHa_neg = BetheHessian(self.A, regularizer='BHan') if weighted is False else \
             WeightedBetheHessian(self.A, regularizer='BHan')
         N = np.shape(self.A)[0]
+        # print(BHa_pos.operator.toarray())
         if num_groups is None:
             Kpos = BHa_pos.find_negative_eigenvectors()
             Kneg = BHa_neg.find_negative_eigenvectors()
@@ -59,10 +60,14 @@ class CommunityDetect:
         else:
             # If num_group is given, cluster evec corresonding with the first num_group eval of BHa_pos and BHa_neg
             BHa_pos.find_k_eigenvectors(num_groups, which='SA')
-            BHa_neg.find_k_eigenvectors(num_groups, which='SA')
-            # combine both sets of eigenvales and eigenvectors and take first k
-            combined_evecs = np.hstack([BHa_pos.evecs, BHa_neg.evecs])
-            combined_evals = np.hstack([BHa_pos.evals, BHa_neg.evals])
+            if only_assortative is False:
+                BHa_neg.find_k_eigenvectors(num_groups, which='SA')
+                # combine both sets of eigenvales and eigenvectors and take first k
+                combined_evecs = np.hstack([BHa_pos.evecs, BHa_neg.evecs])
+                combined_evals = np.hstack([BHa_pos.evals, BHa_neg.evals])
+            else:
+                combined_evecs = BHa_pos.evecs
+                combined_evals = BHa_pos.evals
             index = np.argsort(combined_evals)
             combined_evecs = combined_evecs[:, index[:num_groups]]
         if help_evec is not None:
@@ -360,7 +365,7 @@ class CommunityDetect:
             elif infermode == 6:
                 command = f'./other/mode_net/sbm learn -l {net_gml_path} -n{size} -q{num_groups} -p{",".join([str(x) for x in na])} -c{",".join([str(x) for x in cab])} -M {target_path} -v-1'
             else:
-                command == f''
+                command = f''
         else:
             command = f''
         print(command)
@@ -378,7 +383,7 @@ class CommunityDetect:
                 partition = np.array([])
         return partition, free_energy
 
-    def BP_MDL_learnq(self, groupId, processId=None, rhodelta="", init_epsilon=None, learn_conv_crit=None, learn_max_time=None):
+    def BP_MDL_learnq(self, groupId, max_q=6, processId=None, rhodelta="", init_epsilon=None, learn_conv_crit=None, learn_max_time=None):
         g = nx.from_scipy_sparse_array(self.A)
         N = g.number_of_nodes()
         E = g.number_of_edges()
@@ -388,34 +393,35 @@ class CommunityDetect:
         last_partition = None
         last_q = 0
         last_MDL = None
-        for q in range(1, 6):
+        for q in range(1, max_q):
             if q > 1:
                 partition, _ = self.BP(num_groups=q, na=None, cab=None, groupId=groupId, processId=processId, infermode=2, init_epsilon=init_epsilon, learn_conv_crit=learn_conv_crit, learn_max_time=learn_max_time)
             else:
                 partition = np.array([0 for i in range(N)])
                 # f = "No calculate"
             if np.size(partition) != 0:
-                x = q * (q + 1) / (2*E)
-                hx = ((1+x)*np.log(1+x)-x*np.log(x))
-                Lt = E * hx + N * np.log(q)
-                It = 0
                 q_partition = np.size(np.unique(partition))
-                unique_partition = np.unique(partition)
-                # St = E
-                for r in unique_partition:
-                    for s in unique_partition:
-                        r_index = np.where(partition==r)[0]
-                        s_index = np.where(partition==s)[0]
-                        n_r = np.size(r_index)
-                        n_s = np.size(s_index)
-                        ers = np.sum(self.A[np.ix_(r_index, s_index)])
-                        # ers = ers if r != s else ers/2
-                        # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
-                        mrs = ers / (2*E)
-                        wr = n_r / N
-                        ws = n_s / N
-                        It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
-                Epsilonb = Lt - E * It
+                Epsilonb = self.desc_length(self.A, q, partition)
+                # x = q * (q + 1) / (2*E)
+                # hx = ((1+x)*np.log(1+x)-x*np.log(x))
+                # Lt = E * hx + N * np.log(q)
+                # It = 0
+                # unique_partition = np.unique(partition)
+                # # St = E
+                # for r in unique_partition:
+                #     for s in unique_partition:
+                #         r_index = np.where(partition==r)[0]
+                #         s_index = np.where(partition==s)[0]
+                #         n_r = np.size(r_index)
+                #         n_s = np.size(s_index)
+                #         ers = np.sum(self.A[np.ix_(r_index, s_index)])
+                #         # ers = ers if r != s else ers/2
+                #         # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
+                #         mrs = ers / (2*E)
+                #         wr = n_r / N
+                #         ws = n_s / N
+                #         It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
+                # Epsilonb = Lt - E * It
                 # Epsilont = Lt + St
                 log = f'q={q}, q_partition={q_partition}, MDL={Epsilonb}'
             else:
@@ -521,51 +527,46 @@ class CommunityDetect:
             fw.write(log)
         return result_partition, result_num_group
     
-    def BH_MDL_learnq(self, processId=None, rhodelta=""):
+    def BH_MDL_learnq(self, max_q=6, processId=None, rhodelta=""):
         g = nx.from_scipy_sparse_array(self.A)
         N = g.number_of_nodes()
-        E = g.number_of_edges()
-        # learnq_path = f'./other/mode_net/data/BPlearnq_MDL_FreeEnergy_{str(processId) if processId is not None else ""}.txt'
-        # with open(learnq_path, 'a') as fw:
-        #         fw.write(rhodelta + '\n')
         last_partition = None
         last_q = 0
         last_MDL = None
-        for q in range(1, 6):
+        for q in range(1, max_q):
             if q > 1:
                 partition, _ = self.BetheHessian(num_groups=q)
             else:
                 partition = np.array([0 for i in range(N)])
                 # f = "No calculate"
             if np.size(partition) != 0:
-                x = q * (q + 1) / (2*E)
-                hx = ((1+x)*np.log(1+x)-x*np.log(x))
-                Lt = E * hx + N * np.log(q)
-                It = 0
                 q_partition = np.size(np.unique(partition))
-                unique_partition = np.unique(partition)
-                # St = E
-                for r in unique_partition:
-                    for s in unique_partition:
-                        r_index = np.where(partition==r)[0]
-                        s_index = np.where(partition==s)[0]
-                        n_r = np.size(r_index)
-                        n_s = np.size(s_index)
-                        ers = np.sum(self.A[np.ix_(r_index, s_index)])
-                        # ers = ers if r != s else ers/2
-                        # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
-                        mrs = ers / (2*E)
-                        wr = n_r / N
-                        ws = n_s / N
-                        It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
-                Epsilonb = Lt - E * It
+                Epsilonb = self.desc_length(self.A, q, partition)
+                # x = q * (q + 1) / (2*E)
+                # hx = ((1+x)*np.log(1+x)-x*np.log(x))
+                # Lt = E * hx + N * np.log(q)
+                # It = 0
+                # unique_partition = np.unique(partition)
+                # # St = E
+                # for r in unique_partition:
+                #     for s in unique_partition:
+                #         r_index = np.where(partition==r)[0]
+                #         s_index = np.where(partition==s)[0]
+                #         n_r = np.size(r_index)
+                #         n_s = np.size(s_index)
+                #         ers = np.sum(self.A[np.ix_(r_index, s_index)])
+                #         # ers = ers if r != s else ers/2
+                #         # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
+                #         mrs = ers / (2*E)
+                #         wr = n_r / N
+                #         ws = n_s / N
+                #         It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
+                # Epsilonb = Lt - E * It
                 # Epsilont = Lt + St
                 log = f'q={q}, q_partition={q_partition}, MDL={Epsilonb}'
             else:
-                log = f'q={q}, Error in BP code (Unknown reason)'
+                log = f'q={q}, Error in BH code (Unknown reason)'
             print(log)
-            # with open(learnq_path, 'a') as fw:
-            #     fw.write(log + '\n')
             if np.size(partition) != 0:
                 if q == 1:
                     last_partition = partition
@@ -580,6 +581,31 @@ class CommunityDetect:
         num_group = np.size(np.unique(last_partition))
         return last_partition, num_group
 
+    @staticmethod
+    def desc_length(A, q, partition):
+        N = np.shape(A)[0]
+        E = np.sum(A) / 2
+        x = q * (q + 1) / (2 * E)
+        hx = ((1 + x) * np.log(1 + x) - x * np.log(x))
+        Lt = E * hx + N * np.log(q)
+        It = 0
+        unique_partition = np.unique(partition)
+        # St = E
+        for r in unique_partition:
+            for s in unique_partition:
+                r_index = np.where(partition == r)[0]
+                s_index = np.where(partition == s)[0]
+                n_r = np.size(r_index)
+                n_s = np.size(s_index)
+                ers = np.sum(A[np.ix_(r_index, s_index)])
+                # St -= 1 / 2 * ers * np.log(ers / (n_r * n_s))
+                mrs = ers / (2 * E)
+                wr = n_r / N
+                ws = n_s / N
+                It += mrs * np.log(mrs / (wr * ws)) if mrs != 0 else 0
+        Epsilonb = Lt - E * It  # equation (6) in "Parsimonious module inference in large networks"
+        return Epsilonb
+
     def MDL(self, processId=None):
         # construct g
         g = gt.Graph(directed=False)
@@ -592,6 +618,24 @@ class CommunityDetect:
         partition = np.array([b[i] for i in range(n)])
         q = np.size(np.unique(partition))
         return partition, q
+
+    def leiden(self):
+        G = nx.from_scipy_sparse_array(self.A)
+        comm = nx.community.leiden_communities(G)
+        partition = np.zeros(np.shape(self.A)[0])
+        for i, c in enumerate(comm):
+            for node in c:
+                partition[node] = i
+        return partition, np.size(comm)
+    
+    def louvain(self):
+        G = nx.from_scipy_sparse_array(self.A)
+        comm = nx.community.louvain_communities(G)
+        partition = np.zeros(np.shape(self.A)[0])
+        for i, c in enumerate(comm):
+            for node in c:
+                partition[node] = i
+        return partition, np.size(comm)
 
 
 def test_main():

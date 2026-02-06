@@ -1,7 +1,7 @@
 import itertools
 import os
 import numpy as np
-from scipy.sparse import eye, diags, issparse, csr_array, find, hstack, vstack, csc_array
+from scipy.sparse import eye, diags, issparse, csr_array, find, hstack, vstack, csc_array, identity, kron
 from net_data.enron.enron_parser import *
 import itertools
 import pickle
@@ -9,14 +9,22 @@ from _HyperCommunityDetection import *
 import time
 import json
 import re
+from tqdm import tqdm
+import pandas
 
 
-def cd(empiricalhg, save_path=None, visual_path=None, redetect=True, only_assortative=False, givenNumGroup=None):
+def cd(empiricalhg, save_path=None, visual_path=None, redetect=True, only_assortative=False, givenNumGroup=None,
+       consider_ks=None, dc=False):
     if redetect or save_path is None:
-        BH_Partition, BH_NumGroup = HyperCommunityDetect().BetheHessian(empiricalhg,
-                                                                        num_groups=givenNumGroup,
-                                                                        only_assortative=only_assortative)
-        print(f'Bethe Hessian detect {BH_NumGroup} communities in network {empiricalhg.name}')
+        if dc is False:
+            BH_Partition, BH_NumGroup = HyperCommunityDetect().BetheHessian(empiricalhg,
+                                                                            num_groups=givenNumGroup,
+                                                                            only_assortative=only_assortative,
+                                                                            consider_ks=consider_ks)
+            print(f'Bethe Hessian detect {BH_NumGroup} communities in network {empiricalhg.name}')
+        else:
+            BH_Partition, BH_NumGroup = HyperCommunityDetect().DCBetheHessian(empiricalhg, num_groups=givenNumGroup)
+            print(f'Degree Corrected Bethe Hessian detect {BH_NumGroup} communities in network {empiricalhg.name}')
         if save_path is not None:
             with open(save_path, 'wb') as fw:
                 pickle.dump(BH_Partition, fw)
@@ -166,6 +174,8 @@ class EmpiricalHyperGraph:
                         meta['categories'] = []
                     meta['state'] = business_json['state']
                     meta['city'] = business_json['city']
+                    meta['longitude'] = business_json['longitude']
+                    meta['latitude'] = business_json['latitude']
                     business_id = business_json['business_id']
                     if business_id not in business_map.keys():
                         business_map[business_id] = {'id': i, 'meta': meta}
@@ -477,7 +487,18 @@ class EmpiricalHyperGraph:
             with open("./net_data/APS/aps/publications.csv", 'r') as fr_pub:
                 fr_pub.readline()
                 for line in tqdm(fr_pub.readlines(), desc="Load Publications"):
-                    publication_dois.append((int(line.strip().split(',')[1]), line.strip().split(',')[3]))  # (journalId, doi)
+                    publication_dois.append((int(line.strip().split(',')[1]), line.strip().split(',')[3],
+                                             line.strip().split(',')[3]))  # (journalId, doi, date)
+            # Have a see the number of publication in different years
+            NumPubinYear = dict()
+            for i in range(len(publication_dois)):
+                year = publication_dois[i][2].split('-')[0]
+                if year in NumPubinYear:
+                    NumPubinYear[year] += 1
+                else:
+                    NumPubinYear[year] = 0
+            for year in NumPubinYear:
+                print(f'{year} have {NumPubinYear[year]} publications')
             author_disamb = []
             with open("./net_data/APS/aps/author_names.csv", 'r', encoding="utf-8") as fr_author:
                 fr_author.readline()
@@ -769,12 +790,16 @@ class EmpiricalHyperGraph:
             with open(load_path, 'wb') as fw:
                 pickle.dump(dict({'H': self.H, 'n': self.n, 'e': self.e, 'Ks': self.Ks, 'meta': self.meta}), fw)
 
-    def get_operator(self, operator='BH', r=0):
+    def get_operator(self, operator='BH', r=0, consider_ks=None):
         if operator == "BH":
             edge_order = self.H.sum(axis=0).flatten()
             D = None
             A = None
-            for k in tqdm(self.Ks, desc=rf'Construct $BH_{r}$'):
+            if consider_ks is None:
+                Ks = self.Ks
+            else:
+                Ks = consider_ks
+            for k in tqdm(Ks, desc=rf'Construct $BH_{r}$'):
                 edge_index = np.where(edge_order == k)[0]
                 Hk = self.H[:, edge_index]
                 Dk = diags(Hk.sum(axis=1).flatten().astype(float))
@@ -794,22 +819,48 @@ class EmpiricalHyperGraph:
             directed_hyperedges = []
             B = np.zeros((directed_hyperedge_size, directed_hyperedge_size))
             for mu in range(self.e):
-                for i in range(self.n):
-                    if self.H[i, mu] == 1:
-                        directed_hyperedges.append((i, mu))
+                hedge = self.H[:, [mu]].nonzero()[0]
+                for i in hedge:
+                    directed_hyperedges.append((i, hedge))
             print(f'Non-backtrack constructing for {directed_hyperedge_size} directed node-hyperEdge pairs...')
             for index in tqdm(itertools.product(range(directed_hyperedge_size), repeat=2)):
                 i = index[0]
                 j = index[1]
                 node_i = directed_hyperedges[i][0]
                 node_j = directed_hyperedges[j][0]
-                edge_i = self.H[:, [directed_hyperedges[i][1]]].nonzero()[0]
-                edge_j = self.H[:, [directed_hyperedges[j][1]]].nonzero()[0]
+                edge_i = directed_hyperedges[i][1]  # self.H[:, [directed_hyperedges[i][1]]].nonzero()[0]
+                edge_j = directed_hyperedges[j][1]
                 if node_j in edge_i and node_j != node_i and ((np.size(edge_j) != np.size(edge_i)) or ((edge_j == edge_i).all()) is np.False_):
                     B[i, j] = 1
                 else:
                     B[i, j] = 0
             return csr_array(B)
+        elif operator == "NB_":
+            edge_order = self.H.sum(axis=0).flatten()
+            D = None
+            A = None
+            Ks = self.Ks
+            for k in tqdm(Ks, desc=rf'Construct $NB`$'):
+                edge_index = np.where(edge_order == k)[0]
+                Hk = self.H[:, edge_index]
+                Dk = diags(Hk.sum(axis=1).flatten().astype(float))
+                Ak = Hk.dot(Hk.T) - diags(Hk.dot(Hk.T).diagonal())
+                if A is None:
+                    A = csr_array(vstack([Ak for k in Ks]))
+                else:
+                    A = csr_array(hstack([A, csr_array(vstack([Ak for k in Ks]))]))
+                if D is None:
+                    D = csr_array(vstack([Dk for k in Ks]))
+                else:
+                    D = csr_array(hstack([D, csr_array(vstack([Dk for k in Ks]))]))
+            I = csr_array(identity(len(Ks) * self.n))
+            K = csr_array(diags(Ks))
+            Zeros = csr_array(np.zeros((len(Ks) * self.n, len(Ks) * self.n)))
+            righttop = D - csr_array(identity(len(Ks) * self.n))
+            leftbottom = kron((csr_array(identity(len(Ks))) - K), csr_array(identity(self.n)), format='csr')
+            rightbottom = A + kron((2 * csr_array(identity(len(Ks))) - K), csr_array(identity(self.n)), format='csr')
+            B_ = csr_array(vstack([hstack([Zeros, righttop]), hstack([leftbottom, rightbottom])]))
+            return B_
 
     def saveHedges(self, path):
         if self.H is not None and os.path.exists(path) is False:
@@ -840,10 +891,11 @@ class EmpiricalHyperGraph:
                         f.write(f'{k}:{degree[i][k]} ')
                     f.write('\n')
 
+
 def main1():
-    # name = 'enron'
+    name = 'enron'
     # name = 'tagMathSX'
-    name = 'tagAskUbuntu'
+    # name = 'tagAskUbuntu'
     # name = 'ndc'
     # name = 'primary'
     # name = 'highschool'
@@ -851,27 +903,94 @@ def main1():
     # name = 'yelp'
     # name = 'coauthDBLP'
     # name = 'coauthAPS'
-    ehg = EmpiricalHyperGraph(name, force=True)
-    givenNumGroup = None
+    ehg = EmpiricalHyperGraph(name, force=False)
+    givenNumGroup = 2
     only_assortative = True
+    consider_ks = None
     visual_path = f'./result/hyperEmpirical/{name}_viewOfPartition' \
                   f'{f"_given{givenNumGroup}Groups" if givenNumGroup is not None else ""}' \
-                  f'{f"_assort" if only_assortative else ""}.txt'
+                  f'{f"_assort" if only_assortative else ""}' \
+                  f'{f"{consider_ks}" if consider_ks is not None else ""}.txt'
     save_path = f'./result/hyperEmpirical/{name}_BHPartition' \
                 f'{f"_given{givenNumGroup}Groups" if givenNumGroup is not None else ""}' \
-                f'{f"_assort" if only_assortative else ""}.pkl'
+                f'{f"_assort" if only_assortative else ""}' \
+                f'{f"{consider_ks}" if consider_ks is not None else ""}.pkl'
     partition, _ = cd(ehg, save_path=save_path, visual_path=visual_path,
-                      givenNumGroup=givenNumGroup, only_assortative=only_assortative)
+                      givenNumGroup=givenNumGroup, only_assortative=only_assortative, consider_ks=consider_ks)
 
 
 def main2():
     # name = 'tagAskUbuntu'
-    name = "highschool"
+    # name = "highschool"
+    name = "enron"
     ehg = EmpiricalHyperGraph(name, force=False)
     # ehg.saveHedges(path=f'./net_data/contact-high-school/{name}_hyperedge.txt')
     ehg.saveDegrees(path=f'./net_data/contact-high-school/{name}_degree.txt')
 
 
+def main3():
+    name = 'highschool'
+    ehg = EmpiricalHyperGraph(name, force=False)
+    givenNumGroup = 9
+    only_assortative = True
+    consider_ks = None
+    dc = True
+    visual_path = f'./result/hyperEmpirical/{name}_viewOfPartition' \
+                  f'{f"_given{givenNumGroup}Groups" if givenNumGroup is not None else ""}' \
+                  f'{f"_assort" if only_assortative else ""}' \
+                  f'{f"{consider_ks}" if consider_ks is not None else ""}' \
+                  f'{"_dc" if dc else ""}.txt'
+    save_path = f'./result/hyperEmpirical/{name}_BHPartition' \
+                f'{f"_given{givenNumGroup}Groups" if givenNumGroup is not None else ""}' \
+                f'{f"_assort" if only_assortative else ""}' \
+                f'{f"{consider_ks}" if consider_ks is not None else ""}' \
+                f'{"_dc" if dc else ""}.pkl'
+    partition, _ = cd(ehg, save_path=save_path, visual_path=visual_path,
+                      givenNumGroup=givenNumGroup, only_assortative=only_assortative, consider_ks=consider_ks,
+                      dc=dc)
+
+def debug():
+    name = 'highschool'
+    ehg = EmpiricalHyperGraph(name, force=False)
+    givenNumGroup = 9
+    sign = False
+    # NB_ = ehg.get_operator('NB_')
+    # print("get NB")
+    NB_Partition, NB_NumGroup = HyperCommunityDetect().NonBackTracking_(ehg, num_groups=givenNumGroup, sign=sign)
+    print(f'Nonbacktracking SC detect {NB_NumGroup} communities in network {name}')
+    save_path = f'./result/hyperEmpirical/{name}_NBPartition' \
+                f'{f"_given{givenNumGroup}Groups" if givenNumGroup is not None else ""}' \
+                f'{f"_sign" if sign else "_noSign"}.pkl'
+    with open(save_path, 'wb') as fw:
+        pickle.dump(NB_Partition, fw)
+    meta = []
+    with open('./net_data/contact-high-school/highschool_data.pkl', 'rb') as fr:
+        _data = pickle.load(fr)
+        for i in range(_data['n']):
+            meta.append(_data['meta'][i])
+    meta = np.array(meta)
+    meta_num = np.size(np.unique(meta))
+    cm = np.zeros((NB_NumGroup, meta_num))
+    uniquePartition = np.unique(NB_Partition)
+    uniqueMeta = np.unique(meta)
+    for iP in uniquePartition:
+        trueIndex = np.where(NB_Partition == iP)[0]
+        #         print(type(trueIndex))
+        for iM in uniqueMeta:
+            i = np.where(uniquePartition == iP)
+            j = np.where(uniqueMeta == iM)
+            cm[i, j] = np.size(np.where(meta[trueIndex] == iM))
+    df = pandas.DataFrame(cm, uniquePartition, uniqueMeta)
+    path = f'./result/hyperEmpirical/{name}_NBSC_cm' \
+           f'_given{givenNumGroup}Groups_{"noSign" if sign is False else ""}.xlsx'
+    with pandas.ExcelWriter(path) as writer:
+        df.to_excel(excel_writer=writer)
+        writer._save()
+    pass
+
+
 if __name__ == '__main__':
     # main1()
-    main2()
+    # main2()
+    main3()
+    # debug()

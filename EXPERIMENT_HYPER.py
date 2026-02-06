@@ -10,8 +10,11 @@ os.environ['OPENBLAS_NUM_THREADS'] = '1'
 from multiprocessing import Pool
 
 
-def CDwithBH(hsbm, bipartite=False):
+def CDwithBH(hsbm, bipartite=False, projection=False):
     start = time.time()
+    if projection:
+        A = hsbm.H.dot(hsbm.H.T) - diags(hsbm.H.dot(hsbm.H.T).diagonal())
+        BH_Partition, BH_NumGroup = HyperCommunityDetect().BetheHessian(hsbm=hsbm, projectionMatrix=A)
     if bipartite is False:
         BH_Partition, BH_NumGroup = HyperCommunityDetect().BetheHessian(hsbm)
     else:
@@ -23,7 +26,31 @@ def CDwithBH(hsbm, bipartite=False):
     return ami, BH_NumGroup, cd_time
 
 
-def exp_subprocess(n=3000, q=3, d=15, Ks=(2, ), epsilon=1, times=1, save_path=None, bipartite=False):
+def CDwithBP(hsbm, arg=None, hypergraph_save_name=None):
+    start = time.time()
+    if arg is None:
+        arg = dict()
+        arg["q"] = hsbm.q
+        arg["hyperedge_sizes"] = hsbm.Ks
+        path = "./other/hypergraph_message_passing/data/jiaze_synthetic/"
+        if hypergraph_save_name is None:
+            arg["hypergraph"] = path + f'_n={hsbm.n}_q={hsbm.q}_Ks={hsbm.Ks}_hgraph.txt'
+            arg["hsbm_parameter"] = path + f'_n={hsbm.n}_q={hsbm.q}_Ks={hsbm.Ks}_parameter.npz'
+            arg["save_dir"] = path + f'_n={hsbm.n}_q={hsbm.q}_Ks={hsbm.Ks}_bpresult'
+        else:
+            arg["hypergraph"] = path + f'{hypergraph_save_name}_hgraph.txt'
+            arg["hsbm_parameter"] = path + f'{hypergraph_save_name}_parameter.npz'
+            arg["save_dir"] = path + f'{hypergraph_save_name}_bpresult'
+    BP_Partition, BP_NumGroup = HyperCommunityDetect().BeliefPropagation(hsbm, arg)
+    cd_time = time.time() - start
+    cm, _ = get_confusionmatrix(hsbm.groupId, BP_Partition, hsbm.q, BP_NumGroup)
+    ami = adjusted_mutual_info_score(hsbm.groupId, BP_Partition)
+    print(f"BP result AMI: {ami}. Time={cd_time}. Confusion Matrix({np.shape(cm)}) is: \n{cm}")
+    return ami, BP_NumGroup, cd_time
+
+
+def exp_subprocess(n=3000, q=3, d=15, Ks=(2, ), epsilon=1, times=1, save_path=None, bipartite=False, projection=False,
+                   bp=False):
     sizes = [int(n / q)] * q
     ps_dict = dict()
     temp = 0
@@ -40,7 +67,11 @@ def exp_subprocess(n=3000, q=3, d=15, Ks=(2, ), epsilon=1, times=1, save_path=No
             hsbm = UniformSymmetricHSBM(n, q, Ks[0], cin, cout)
         print(f'epsilon={epsilon} times={t} start. cin={cin}, cout={cout}, hsbm construct time={time.time()-start}')
         # Community Detection
-        result = CDwithBH(hsbm, bipartite)
+        if bp:
+            hypergraph_save_name = f'amiexp_n={n}_q={q}_d={d}_Ks={Ks}_epsilon={epsilon}_times={t}'
+            result = CDwithBP(hsbm, hypergraph_save_name=hypergraph_save_name)
+        else:
+            result = CDwithBH(hsbm, bipartite, projection)
         results += f'{epsilon} {t} {result[0]} {result[1]} {result[2]}\n'
     return save_path, results
 
@@ -59,7 +90,8 @@ def print_error(value):
     print(value)
 
 
-def run_exp(epsilons, times, save_path=None, n=3000, q=3, d=15, Ks=(2, ), multiprocessing=True, bipartite=False):
+def run_exp(epsilons, times, save_path=None, n=3000, q=3, d=15, Ks=(2, ), multiprocessing=True, bipartite=False,
+            projection=False, bp=False):
     epsilon_done = set()
     if os.path.exists(save_path):
         with open(save_path, 'r') as f:
@@ -72,7 +104,7 @@ def run_exp(epsilons, times, save_path=None, n=3000, q=3, d=15, Ks=(2, ), multip
             if round(epsilon, 5) in epsilon_done:
                 print(f'snr={epsilon} has been run!')
                 continue
-            p.apply_async(exp_subprocess, args=(n, q, d, Ks, epsilon, times, save_path, bipartite, ),
+            p.apply_async(exp_subprocess, args=(n, q, d, Ks, epsilon, times, save_path, bipartite, projection, bp, ),
                           callback=write_results, error_callback=print_error)
         p.close()
         p.join()
@@ -81,7 +113,7 @@ def run_exp(epsilons, times, save_path=None, n=3000, q=3, d=15, Ks=(2, ), multip
             if round(epsilon, 5) in epsilon_done:
                 print(f'snr={epsilon} has been run!')
                 continue
-            savepath, results = exp_subprocess(n, q, d, Ks, epsilon, times, save_path, bipartite)
+            savepath, results = exp_subprocess(n, q, d, Ks, epsilon, times, save_path, bipartite, projection, bp)
             write_results((savepath, results))
 
 
@@ -227,6 +259,193 @@ def exp6():
     run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing)
 
 
+def exp7():
+    """ Exp q>2 """
+    n = 150
+    q = 3
+    d = 15
+    times = 10
+    epsilons = np.linspace(0.1, 1, 46)
+    Ks = (2, 3)
+    bipartite = False
+    projection = True
+    multiprocessing = True
+    # addStrId = f'_higher_q'
+    addStrId = f''
+    # fileId = 'amiExpHyper24.6.5' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}BH{"_bi" if bipartite else ""}' + addStrId
+    fileId = 'amiExpHyper24.8.11' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}BH{"_bi" if bipartite else ""}' \
+                                    f'{"_proj" if projection else ""}' + addStrId
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bipartite, projection)
+
+
+def exp8():
+    n = 100
+    q = 2
+    d = 10
+    times = 2
+    # epsilons = np.concatenate((np.linspace(0.1, 1, 51), np.linspace(1.4, 10, 21)), axis=None)
+    epsilons = np.linspace(0.1, 1, 46)
+    Ks = (2, 3)
+    multiprocessing = True
+    bp = True
+    addtionTag = ""
+    fileId = 'amiExpHyper24.12.09' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}_{"BP" if bp else "BH"}_{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bp=bp)
+
+
+def exp19():
+    n = 30000
+    q = 2
+    d = 10
+    times = 10
+    # epsilons = np.concatenate((np.linspace(0.1, 1, 51), np.linspace(1.4, 10, 21)), axis=None)
+    epsilons = np.linspace(0.1, 1, 101)
+    Ks = (3, )
+    multiprocessing = False
+    bp = False
+    addtionTag = ""
+    fileId = 'amiExpHyper24.12.20' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}_{"BP" if bp else "BH"}_{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bp=bp)
+
+
+def exp20():
+    n = 30000
+    q = 2
+    d = 10
+    times = 20
+    # epsilons = np.concatenate((np.linspace(0.1, 1, 51), np.linspace(1.4, 10, 21)), axis=None)
+    epsilons = np.linspace(0.1, 1, 46)
+    Ks = (3, )
+    multiprocessing = True
+    bp = False
+    addtionTag = ""
+    fileId = 'amiExpHyper24.12.20' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}_{"BP" if bp else "BH"}_{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bp=bp)
+
+
+def exp21():
+    n = 30000
+    q = 2
+    d = 10
+    times = 20
+    # epsilons = np.concatenate((np.linspace(0.1, 1, 51), np.linspace(1.4, 10, 21)), axis=None)
+    epsilons = np.linspace(0.4, 0.5, 51)
+    Ks = (3, )
+    multiprocessing = True
+    bp = False
+    addtionTag = "0.4-0.5"
+    fileId = 'amiExpHyper24.12.21' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}_{"BP" if bp else "BH"}_{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bp=bp)
+
+
+def exp22():
+    n = 30000
+    q = 2
+    d = 10
+    times = 30
+    # epsilons = np.concatenate((np.linspace(0.1, 1, 51), np.linspace(1.4, 10, 21)), axis=None)
+    epsilons = np.linspace(0.4, 0.5, 51)
+    Ks = (3, )
+    multiprocessing = True
+    bp = False
+    addtionTag = "0.4-0.5more30"
+    fileId = 'amiExpHyper24.12.21' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}_{"BP" if bp else "BH"}_{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bp=bp)
+
+
+def exp23():
+    n = 30000
+    q = 2
+    d = 10
+    times = 30
+    # epsilons = np.concatenate((np.linspace(0.1, 1, 51), np.linspace(1.4, 10, 21)), axis=None)
+    epsilons = np.linspace(0.1, 1, 46)
+    Ks = (3, )
+    multiprocessing = True
+    bp = False
+    addtionTag = "more30"
+    fileId = 'amiExpHyper24.12.21' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}_{"BP" if bp else "BH"}_{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing, bp=bp)
+
+
+def exp24():
+    n = 30000
+    q = 2
+    d = 10
+    times = 30
+    epsilons = np.linspace(0.4, 0.6, 101)
+    # epsilons = np.linspace(0.1, 1, 46)
+    Ks = (2, 3)
+    multiprocessing = True
+    addtionTag = "0.4~0.6more30"
+    fileId = 'amiExpHyper24.12.22' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}BH{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing)
+
+
+def exp25():
+    n = 30000
+    q = 3
+    d = 10
+    times = 40
+    epsilons = np.linspace(0.3, 0.5, 101)
+    # epsilons = np.linspace(0.1, 1, 46)
+    Ks = (2, 3)
+    multiprocessing = True
+    addtionTag = "0.3~0.5more40"
+    fileId = 'amiExpHyper24.12.23' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}BH{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing)
+
+
+def exp26():
+    n = 30000
+    q = 3
+    d = 10
+    times = 50
+    epsilons = np.linspace(0.3, 0.5, 101)
+    # epsilons = np.linspace(0.1, 1, 46)
+    Ks = (2, 3)
+    multiprocessing = True
+    addtionTag = "0.3~0.5more50"
+    fileId = 'amiExpHyper24.12.24' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}BH{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing)
+
+
+def exp27():
+    n = 30000
+    q = 2
+    d = 10
+    times = 50
+    epsilons = np.linspace(0.4, 0.6, 101)
+    # epsilons = np.linspace(0.1, 1, 46)
+    Ks = (2, 3)
+    multiprocessing = True
+    addtionTag = "0.4~0.6more50"
+    fileId = 'amiExpHyper24.12.24' + f'_n={n}_q={q}_d={round(d)}_Ks={Ks}BH{addtionTag}'
+    save_path = "./result/detectabilityHyper/" + fileId + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileId} size={np.size(epsilons) * times}")
+    run_exp(epsilons, times, save_path, n, q, d, Ks, multiprocessing)
+
+
 def debug():
     n = 100
     q = 2
@@ -243,6 +462,17 @@ if __name__ == '__main__':
     # exp1()
     # exp2()
     # exp3()
-    exp4()
+    # exp4()
     # exp5()
     # exp6()
+    # exp7()
+    # exp8()
+    # exp19()
+    # exp20()
+    # exp21()
+    # exp22()
+    # exp23()
+    # exp24()
+    # exp25()
+    # exp26()
+    exp27()

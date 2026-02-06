@@ -135,27 +135,13 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=Tr
                    homoDegree=False, checkSNR=False):
     """
     Here n, rho, d is sub parameter. The full parameter n_f, rho_f, pin, pout should be calculated base on sub
-    :param n:
-    :param q:
-    :param Z_s:
-    :param Z_b:
-    :param d:
-    :param rho:
-    :param delta:
-    :param times:
-    :param savepath:
-    :param Withlambda:
-    :param givenNumGroup:
-    :param DC:
-    :param BP:
-    :return:
     """
     if homoDegree is False:
         # Fix pin for both part, that make the average degree of different part different
         pout = d / n - ((1-rho)**2 / Z_b + rho**2 / Z_s) * delta
         pin = pout + delta
-        pin = 0 if pin < 1e-10 else pin
-        pout = 0 if pout < 1e-10 else pout
+        pin = 0 if 0 < pin < 1e-10 else pin
+        pout = 0 if 0 < pout < 1e-10 else pout
         if BP:
             # For BP not use two small pin and pout
             pin = 1e-5 if pin < 1e-5 else pin
@@ -207,9 +193,12 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=Tr
         #     lambdas = msbm.get_lambdas(n, rho, Z_s, Z_b, pin, pout)
         #     SNR = lambdas[1]**2 / lambdas[0]
         # else:
-        P = np.diag([rho / Z_s] * Z_s + [(1 - rho) / Z_b] * Z_b)
-        Q = n * ps
-        lambdas = msbm.get_lambdas_general(P, Q)
+        if pin < 0 or pin > 1 or pout < 0 or pout > 1:
+            lambdas = [1, np.inf, np.inf, np.inf]
+        else:
+            P = np.diag([rho / Z_s] * Z_s + [(1 - rho) / Z_b] * Z_b)
+            Q = n * ps
+            lambdas = msbm.get_lambdas_general(P, Q)
     for t in range(times):
         start = time.time()
         print(f"EXP pid={os.getpid()} begin... rho={rho}, delta={delta}, times={t}")
@@ -236,7 +225,14 @@ def exp_subprocess(n, q, Z_s, Z_b, d, rho, delta, times, savepath, Withlambda=Tr
         if checkSNR:
             result_data = (0, 1)
         else:
-            result_data = synthetic_exp_full2sub(msbm, givenNumGroup=givenNumGroup, DC=DC, BP=BP, init_epsilon=init_epsilon, learnqby=learnqby, givenNacab=False, strId=strId, writeCM=writeCM)
+            if pin < 0 or pin > 1 or pout < 0 or pout > 1:
+                result_data = (-1, -1)
+            # if Withlambda and lambdas[1]**2/lambdas[0] <= 1:
+            #     result_data = (0, 1)  # omit the case that snr<=1
+            else:
+                result_data = synthetic_exp_full2sub(msbm, givenNumGroup=givenNumGroup, DC=DC, BP=BP,
+                                                     init_epsilon=init_epsilon, learnqby=learnqby, givenNacab=False,
+                                                     strId=strId, writeCM=writeCM)
         sub_ami, sub_num_groups = result_data[0], result_data[1]
         
         results += f'{rho} {delta} {t} {sub_ami} {sub_num_groups}'
@@ -330,12 +326,12 @@ def read_exp(load_path, Withlambda=False, exclude_rho=None, exclude_z=None, add_
                     print(f"Some parameter rho={_rho}, z={_z} didn't run!")
                 mean_ami = np.mean(ami_results, 0)[3:] if len(np.shape(ami_results)) == 2 else ami_results[3:]
                 # full_ami[i] = mean_ami[0]
-                sub_ami[i] = mean_ami[0]
-                sub_num_group[i] = mean_ami[1]
                 if Withlambda:
                     if lambdas is None:
                         lambdas = np.zeros((np.size(zs) * np.size(rhos), max_lambda_num))
                     lambdas[i] = mean_ami[2:]
+                sub_ami[i] = mean_ami[0]
+                sub_num_group[i] = mean_ami[1]
                 i += 1
         plot_rhos = np.repeat(rhos, np.size(zs))
         plot_zs = np.tile(zs, np.size(rhos))
@@ -1205,6 +1201,91 @@ def exp23():
             writeCM=writeCM, additionId=additionId, homoDegree=homoDegree, checkSNR=checkSNR)
 
 
+def exp24():
+    """
+        Compare BP, BH learn q by MDL, MFE, NegEig
+    """
+    times = 10
+    n = 6000
+    d = 10
+    Z_s = 2
+    Z_b = 2
+    q = Z_s + Z_b
+    rho = np.setdiff1d(np.around(np.linspace(0, 0.5, 42), 3), np.array([0, 0.5]))
+    homoDegree = False
+    min_delta = 0
+    max_delta = min(Z_s, Z_b) * d / n
+    delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, 40), 5), np.array([]))
+    # delta = delta[13:]
+    # print(delta)
+    Withlambda = True
+    givenNumGroup = False
+    DC = False
+    BP = False
+    learnqby = None
+    givenTrueEpsilon = False
+    writeCM = False
+    additionId = "BH_learnq_NegEig"
+    checkSNR = False
+    multiprocessing = False
+    fileID = 'amiExp25.2.12' + f'_n={n}_q={q}_d={round(d)}_{"lambda" if Withlambda else ""}_' \
+                               f'{"givenNumGroup" if givenNumGroup else ""}_' \
+                               f'{"DC" if DC else ""}_{"BP" if BP else ""}_' \
+                               f'{"givenTrueEpsilon" if givenTrueEpsilon else ""}_{"writeCM" if writeCM else ""}_{"HomoD" if homoDegree else ""}_' \
+                               f'{"CheckSNR" if checkSNR else ""}_' \
+                               f'{additionId}'
+    save_path = "./result/detectabilityWithMeta/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(rho) * np.size(delta) * times}",
+          f'min_delta={min_delta} max_delta={max_delta}, Withlambda={Withlambda}, givenNumberGroup={givenNumGroup}, '
+          f'DC={DC}, BP={BP}')
+    run_exp(rho, delta, times, save_path, q, n, d, Z_s, Z_b, Withlambda=Withlambda, multiprocessing=multiprocessing,
+            givenNumGroup=givenNumGroup, DC=DC, BP=BP, learnqby=learnqby, givenTrueEpsilon=givenTrueEpsilon,
+            writeCM=writeCM, additionId=additionId, homoDegree=homoDegree, checkSNR=checkSNR)
+
+
+def exp32():
+    """
+    sub parameter is fix as n, d. rho, delta belong to sub
+    :return:
+    """
+    times = 20
+    n = 6000
+    d = 5
+    Z_s = 1
+    Z_b = 2
+    q = Z_s + Z_b
+    max_rho = Z_s/q
+    rho_len=54
+    delta_len=52
+    # sizes = [[n_q] * Z_s, [n_q] * Z_b]
+    rho = np.setdiff1d(np.around(np.linspace(0, max_rho, rho_len), 6), np.array([0, 0.5, max_rho, 1]))
+    min_delta, max_delta = None, None
+    for r in rho:
+        for delta in np.setdiff1d(np.around(np.linspace(-1, 1, 10000), 6), np.array([])):
+            pout = d / n - ((1-r)**2 / Z_b + r**2 / Z_s) * delta
+            pin = pout + delta
+            if 0 <= pin <= 1 and 0 <= pout <= 1:
+                min_delta = delta if min_delta is None or delta < min_delta else min_delta
+                max_delta = delta if max_delta is None or delta > max_delta else max_delta
+    min_delta = 0
+    delta = np.setdiff1d(np.around(np.linspace(min_delta, max_delta, delta_len), 5), np.array([0]))
+    print(delta)
+    Withlambda = True
+    givenNumGroup = False
+    DC = False
+    BP = False
+    multiprocessing = True
+    fileID = 'amiExp25.4.3' + f'_n={n}_q={q}_d={round(d)}_{"lambda" if Withlambda else ""}_'\
+                              f'{"givenNumGroup" if givenNumGroup else ""}_' \
+                              f'{"DC" if DC else ""}'
+    save_path = "./result/detectabilityWithMeta/" + fileID + ".txt"
+    print(f"EXP pid={os.getpid()} for file={fileID} size={np.size(rho) * np.size(delta) * times}",
+          f'min_delta={min_delta} max_delta={max_delta}, Withlambda={Withlambda}, givenNumberGroup={givenNumGroup}, '
+          f'DC={DC}, BP={BP}')
+    run_exp(rho, delta, times, save_path, q, n, d, Z_s, Z_b, Withlambda=Withlambda, multiprocessing=multiprocessing,
+            givenNumGroup=givenNumGroup, DC=DC, BP=BP)
+
+
 if __name__ == '__main__':
     # exp0()
     # exp1()
@@ -1226,4 +1307,6 @@ if __name__ == '__main__':
     # exp17()
     # exp18()
     # exp19()
-    exp23()
+    # exp23()
+    # exp24()
+    exp32()
